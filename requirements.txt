@@ -1,0 +1,26 @@
+# Core dependencies
+Pillow>=10.0.0
+PyYAML>=6.0
+numpy>=1.23.0,<2.0
+opencv-python>=4.6.0,<4.10
+
+# GUI
+PyQt5>=5.15.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+hypothesis>=6.82.0
+
+# YOLO frameworks with CPU-only PyTorch
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.0.0  # For YOLOv8
+# yolov5>=7.0.0  # For YOLOv5 (optional)
+
+# Dataset APIs
+pycocotools>=2.0.6
+requests>=2.31.0
+
+# Utilities
+tqdm>=4.65.0
