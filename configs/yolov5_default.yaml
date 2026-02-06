@@ -1,0 +1,27 @@
+# YOLOv5 Default Training Configuration
+
+# Model parameters
+model_architecture: yolov5s
+pretrained_weights: null
+num_classes: 1
+class_names:
+  - baby
+
+# Training parameters
+epochs: 100
+batch_size: 16
+image_size: 640
+learning_rate: 0.01
+optimizer: SGD
+
+# Data parameters
+dataset_yaml: ./data/dataset.yaml
+augmentation: true
+
+# Hardware parameters
+device: cpu
+workers: 4
+
+# Checkpoint parameters
+save_period: 10
+resume_from: null
