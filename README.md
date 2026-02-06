@@ -1,4 +1,6 @@
-# YOLO Object Detection Training Pipeline
+
+# YOLO Object Detection and Segmentation Train<img width="1260" height="716" alt="front" src="https://github.com/user-attachments/assets/0ec22b10-965c-4399-87d4-d36a3e36fae5" />
+ing Pipeline
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -248,3 +250,4 @@ For questions or support, please open an issue on GitHub.
 ---
 
 **Made with ❤️ for the Computer Vision community**
+
