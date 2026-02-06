@@ -1,0 +1,1793 @@
+"""Main GUI window for YOLO Training Pipeline"""
+import sys
+from pathlib import Path
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QLineEdit, QTextEdit, QTabWidget, QFileDialog,
+    QSpinBox, QDoubleSpinBox, QComboBox, QProgressBar, QGroupBox, QGridLayout,
+    QMenuBar, QAction, QMessageBox, QDialog, QScrollArea
+)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QFont, QPalette, QColor, QIcon
+
+from src.dataset import DatasetManager
+from src.config import ConfigurationManager
+from src.training import TrainingEngine
+from src.evaluation import EvaluationModule
+from src.models import DatasetConfig, EvaluationConfig
+
+
+class TrainingThread(QThread):
+    """Background thread for training"""
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(dict)
+    
+    def __init__(self, config, output_dir):
+        super().__init__()
+        self.config = config
+        self.output_dir = output_dir
+    
+    def run(self):
+        try:
+            self.progress.emit("Initializing training...")
+            engine = TrainingEngine(self.config, Path(self.output_dir))
+            self.progress.emit("Training started...")
+            result = engine.train()
+            self.progress.emit("Training complete!")
+            self.finished.emit(result.final_metrics)
+        except Exception as e:
+            self.progress.emit(f"Error: {str(e)}")
+
+
+class YOLOTrainingGUI(QMainWindow):
+    """Main GUI window"""
+    
+    def __init__(self):
+        super().__init__()
+        self.dataset_manager = None
+        self.training_thread = None
+        self.init_ui()
+    
+    def init_ui(self):
+        """Initialize the user interface"""
+        self.setWindowTitle("YOLO Training Pipeline - AI Baby Detector")
+        self.setGeometry(100, 100, 1200, 800)
+        
+        # Apply high-tech dark theme
+        self.apply_dark_theme()
+        
+        # Create menu bar
+        self.create_menu_bar()
+        
+        # Create central widget and main layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        
+        # Title
+        title = QLabel("🤖 YOLO Training Pipeline")
+        title.setFont(QFont("Arial", 24, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #00ff88; padding: 20px;")
+        main_layout.addWidget(title)
+        
+        # Create tabs
+        tabs = QTabWidget()
+        tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 2px solid #00ff88;
+                background: #1a1a2e;
+            }
+            QTabBar::tab {
+                background: #16213e;
+                color: #00ff88;
+                padding: 10px 20px;
+                margin: 2px;
+                border: 1px solid #00ff88;
+            }
+            QTabBar::tab:selected {
+                background: #0f3460;
+                font-weight: bold;
+            }
+        """)
+        
+        # Add tabs
+        tabs.addTab(self.create_dataset_tab(), "📁 Dataset")
+        tabs.addTab(self.create_training_tab(), "🚀 Training")
+        tabs.addTab(self.create_evaluation_tab(), "📊 Evaluation")
+        tabs.addTab(self.create_logs_tab(), "📝 Logs")
+        
+        main_layout.addWidget(tabs)
+        
+        # Status bar
+        self.statusBar().showMessage("Ready")
+        self.statusBar().setStyleSheet("background: #16213e; color: #00ff88; padding: 5px;")
+    
+    def create_menu_bar(self):
+        """Create menu bar with Help menu"""
+        menubar = self.menuBar()
+        menubar.setStyleSheet("""
+            QMenuBar {
+                background-color: #16213e;
+                color: #00ff88;
+                padding: 5px;
+            }
+            QMenuBar::item {
+                background-color: #16213e;
+                color: #00ff88;
+                padding: 8px 15px;
+            }
+            QMenuBar::item:selected {
+                background-color: #0f3460;
+            }
+            QMenu {
+                background-color: #16213e;
+                color: #00ff88;
+                border: 2px solid #00ff88;
+            }
+            QMenu::item {
+                padding: 8px 25px;
+            }
+            QMenu::item:selected {
+                background-color: #0f3460;
+            }
+        """)
+        
+        # Help menu
+        help_menu = menubar.addMenu("📚 Help")
+        
+        # Quick Start action
+        quick_start_action = QAction("🚀 Quick Start Guide", self)
+        quick_start_action.triggered.connect(self.show_quick_start)
+        help_menu.addAction(quick_start_action)
+        
+        # About Project action
+        about_project_action = QAction("📖 About This Project", self)
+        about_project_action.triggered.connect(self.show_about_project)
+        help_menu.addAction(about_project_action)
+        
+        # How to Use action
+        how_to_action = QAction("🎯 How to Use", self)
+        how_to_action.triggered.connect(self.show_how_to_use)
+        help_menu.addAction(how_to_action)
+        
+        # Understanding Metrics action
+        metrics_action = QAction("📊 Understanding Metrics", self)
+        metrics_action.triggered.connect(self.show_metrics_help)
+        help_menu.addAction(metrics_action)
+        
+        help_menu.addSeparator()
+        
+        # Troubleshooting action
+        troubleshoot_action = QAction("🔧 Troubleshooting", self)
+        troubleshoot_action.triggered.connect(self.show_troubleshooting)
+        help_menu.addAction(troubleshoot_action)
+        
+        help_menu.addSeparator()
+        
+        # About action
+        about_action = QAction("ℹ️ About", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
+
+    
+    def apply_dark_theme(self):
+        """Apply high-tech dark theme"""
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(26, 26, 46))
+        palette.setColor(QPalette.WindowText, QColor(0, 255, 136))
+        palette.setColor(QPalette.Base, QColor(22, 33, 62))
+        palette.setColor(QPalette.AlternateBase, QColor(26, 26, 46))
+        palette.setColor(QPalette.Text, QColor(255, 255, 255))
+        palette.setColor(QPalette.Button, QColor(15, 52, 96))
+        palette.setColor(QPalette.ButtonText, QColor(0, 255, 136))
+        self.setPalette(palette)
+        
+        # Global stylesheet
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #1a1a2e;
+            }
+            QLabel {
+                color: #ffffff;
+                font-size: 12px;
+            }
+            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+                background-color: #16213e;
+                color: #ffffff;
+                border: 2px solid #00ff88;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 12px;
+            }
+            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+                border: 2px solid #00ffff;
+            }
+            QPushButton {
+                background-color: #0f3460;
+                color: #00ff88;
+                border: 2px solid #00ff88;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #00ff88;
+                color: #1a1a2e;
+            }
+            QPushButton:pressed {
+                background-color: #00cc66;
+            }
+            QTextEdit {
+                background-color: #0d1117;
+                color: #00ff88;
+                border: 2px solid #00ff88;
+                border-radius: 5px;
+                padding: 10px;
+                font-family: 'Courier New';
+                font-size: 11px;
+            }
+            QProgressBar {
+                border: 2px solid #00ff88;
+                border-radius: 5px;
+                text-align: center;
+                background-color: #16213e;
+                color: #ffffff;
+            }
+            QProgressBar::chunk {
+                background-color: #00ff88;
+            }
+            QGroupBox {
+                border: 2px solid #00ff88;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 15px;
+                font-weight: bold;
+                color: #00ff88;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+
+    
+    def create_dataset_tab(self):
+        """Create dataset management tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Collection group
+        collect_group = QGroupBox("📥 Data Collection")
+        collect_layout = QGridLayout()
+        
+        collect_layout.addWidget(QLabel("Dataset Root:"), 0, 0)
+        self.dataset_root_input = QLineEdit("./data/baby_dataset")
+        collect_layout.addWidget(self.dataset_root_input, 0, 1)
+        
+        browse_btn = QPushButton("📂 Browse")
+        browse_btn.clicked.connect(self.browse_dataset_root)
+        collect_layout.addWidget(browse_btn, 0, 2)
+        
+        collect_layout.addWidget(QLabel("Source Directory:"), 1, 0)
+        self.source_dir_input = QLineEdit()
+        collect_layout.addWidget(self.source_dir_input, 1, 1)
+        
+        browse_source_btn = QPushButton("📂 Browse")
+        browse_source_btn.clicked.connect(self.browse_source_dir)
+        collect_layout.addWidget(browse_source_btn, 1, 2)
+        
+        collect_btn = QPushButton("🚀 Collect Images")
+        collect_btn.clicked.connect(self.collect_images)
+        collect_layout.addWidget(collect_btn, 2, 0, 1, 3)
+        
+        collect_group.setLayout(collect_layout)
+        layout.addWidget(collect_group)
+        
+        # Split group
+        split_group = QGroupBox("✂️ Dataset Split")
+        split_layout = QGridLayout()
+        
+        split_layout.addWidget(QLabel("Train Ratio:"), 0, 0)
+        self.train_ratio = QDoubleSpinBox()
+        self.train_ratio.setRange(0.1, 0.9)
+        self.train_ratio.setValue(0.7)
+        self.train_ratio.setSingleStep(0.1)
+        split_layout.addWidget(self.train_ratio, 0, 1)
+        
+        split_layout.addWidget(QLabel("Val Ratio:"), 1, 0)
+        self.val_ratio = QDoubleSpinBox()
+        self.val_ratio.setRange(0.1, 0.9)
+        self.val_ratio.setValue(0.2)
+        self.val_ratio.setSingleStep(0.1)
+        split_layout.addWidget(self.val_ratio, 1, 1)
+        
+        split_layout.addWidget(QLabel("Test Ratio:"), 2, 0)
+        self.test_ratio = QDoubleSpinBox()
+        self.test_ratio.setRange(0.1, 0.9)
+        self.test_ratio.setValue(0.1)
+        self.test_ratio.setSingleStep(0.1)
+        split_layout.addWidget(self.test_ratio, 2, 1)
+        
+        split_btn = QPushButton("✂️ Split Dataset")
+        split_btn.clicked.connect(self.split_dataset)
+        split_layout.addWidget(split_btn, 3, 0, 1, 2)
+        
+        split_group.setLayout(split_layout)
+        layout.addWidget(split_group)
+        
+        # Statistics group
+        stats_group = QGroupBox("📊 Dataset Statistics")
+        stats_layout = QVBoxLayout()
+        
+        self.stats_display = QTextEdit()
+        self.stats_display.setReadOnly(True)
+        self.stats_display.setMaximumHeight(150)
+        stats_layout.addWidget(self.stats_display)
+        
+        stats_btn = QPushButton("🔄 Refresh Statistics")
+        stats_btn.clicked.connect(self.show_statistics)
+        stats_layout.addWidget(stats_btn)
+        
+        stats_group.setLayout(stats_layout)
+        layout.addWidget(stats_group)
+        
+        layout.addStretch()
+        return widget
+
+    
+    def create_training_tab(self):
+        """Create training configuration tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Model configuration
+        config_group = QGroupBox("⚙️ Model Configuration")
+        config_layout = QGridLayout()
+        
+        config_layout.addWidget(QLabel("YOLO Version:"), 0, 0)
+        self.yolo_version = QComboBox()
+        self.yolo_version.addItems(["yolov5", "yolov8"])
+        config_layout.addWidget(self.yolo_version, 0, 1)
+        
+        config_layout.addWidget(QLabel("Model Architecture:"), 1, 0)
+        self.model_arch = QComboBox()
+        self.model_arch.addItems(["yolov5n", "yolov5s", "yolov5m", "yolov5l", "yolov5x"])
+        self.model_arch.setCurrentText("yolov5s")
+        config_layout.addWidget(self.model_arch, 1, 1)
+        
+        config_layout.addWidget(QLabel("Epochs:"), 2, 0)
+        self.epochs = QSpinBox()
+        self.epochs.setRange(1, 1000)
+        self.epochs.setValue(50)
+        config_layout.addWidget(self.epochs, 2, 1)
+        
+        config_layout.addWidget(QLabel("Batch Size:"), 3, 0)
+        self.batch_size = QSpinBox()
+        self.batch_size.setRange(1, 128)
+        self.batch_size.setValue(16)
+        config_layout.addWidget(self.batch_size, 3, 1)
+        
+        config_layout.addWidget(QLabel("Image Size:"), 4, 0)
+        self.image_size = QComboBox()
+        self.image_size.addItems(["320", "416", "640", "1280"])
+        self.image_size.setCurrentText("640")
+        config_layout.addWidget(self.image_size, 4, 1)
+        
+        config_layout.addWidget(QLabel("Device:"), 5, 0)
+        self.device = QComboBox()
+        self.device.addItems(["cpu", "cuda"])
+        config_layout.addWidget(self.device, 5, 1)
+        
+        config_layout.addWidget(QLabel("Output Directory:"), 6, 0)
+        self.output_dir = QLineEdit("./runs/train")
+        config_layout.addWidget(self.output_dir, 6, 1)
+        
+        config_group.setLayout(config_layout)
+        layout.addWidget(config_group)
+        
+        # Training control
+        control_group = QGroupBox("🎮 Training Control")
+        control_layout = QVBoxLayout()
+        
+        self.train_btn = QPushButton("🚀 Start Training")
+        self.train_btn.clicked.connect(self.start_training)
+        control_layout.addWidget(self.train_btn)
+        
+        self.training_progress = QProgressBar()
+        self.training_progress.setRange(0, 0)  # Indeterminate
+        self.training_progress.setVisible(False)
+        control_layout.addWidget(self.training_progress)
+        
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+        
+        layout.addStretch()
+        return widget
+
+    
+    def create_evaluation_tab(self):
+        """Create evaluation tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        eval_group = QGroupBox("🎯 Model Evaluation")
+        eval_layout = QGridLayout()
+        
+        eval_layout.addWidget(QLabel("Model Path:"), 0, 0)
+        self.model_path = QLineEdit("./runs/train/best.pt")
+        eval_layout.addWidget(self.model_path, 0, 1)
+        
+        browse_model_btn = QPushButton("📂 Browse")
+        browse_model_btn.clicked.connect(self.browse_model)
+        eval_layout.addWidget(browse_model_btn, 0, 2)
+        
+        eval_layout.addWidget(QLabel("Dataset Split:"), 1, 0)
+        self.eval_split = QComboBox()
+        self.eval_split.addItems(["test", "val"])
+        eval_layout.addWidget(self.eval_split, 1, 1)
+        
+        eval_layout.addWidget(QLabel("Confidence Threshold:"), 2, 0)
+        self.conf_threshold = QDoubleSpinBox()
+        self.conf_threshold.setRange(0.0, 1.0)
+        self.conf_threshold.setValue(0.25)
+        self.conf_threshold.setSingleStep(0.05)
+        eval_layout.addWidget(self.conf_threshold, 2, 1)
+        
+        eval_btn = QPushButton("📊 Evaluate Model")
+        eval_btn.clicked.connect(self.evaluate_model)
+        eval_layout.addWidget(eval_btn, 3, 0, 1, 3)
+        
+        eval_group.setLayout(eval_layout)
+        layout.addWidget(eval_group)
+        
+        # Results display
+        results_group = QGroupBox("📈 Evaluation Results")
+        results_layout = QVBoxLayout()
+        
+        self.eval_results = QTextEdit()
+        self.eval_results.setReadOnly(True)
+        results_layout.addWidget(self.eval_results)
+        
+        results_group.setLayout(results_layout)
+        layout.addWidget(results_group)
+        
+        return widget
+    
+    def create_logs_tab(self):
+        """Create logs tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        logs_group = QGroupBox("📝 System Logs")
+        logs_layout = QVBoxLayout()
+        
+        self.log_display = QTextEdit()
+        self.log_display.setReadOnly(True)
+        logs_layout.addWidget(self.log_display)
+        
+        clear_btn = QPushButton("🗑️ Clear Logs")
+        clear_btn.clicked.connect(lambda: self.log_display.clear())
+        logs_layout.addWidget(clear_btn)
+        
+        logs_group.setLayout(logs_layout)
+        layout.addWidget(logs_group)
+        
+        return widget
+
+    
+    # Event handlers
+    def browse_dataset_root(self):
+        """Browse for dataset root directory"""
+        directory = QFileDialog.getExistingDirectory(self, "Select Dataset Root")
+        if directory:
+            self.dataset_root_input.setText(directory)
+    
+    def browse_source_dir(self):
+        """Browse for source directory"""
+        directory = QFileDialog.getExistingDirectory(self, "Select Source Directory")
+        if directory:
+            self.source_dir_input.setText(directory)
+    
+    def browse_model(self):
+        """Browse for model file"""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model", "", "Model Files (*.pt)")
+        if file_path:
+            self.model_path.setText(file_path)
+    
+    def log(self, message):
+        """Add message to log display"""
+        self.log_display.append(f"[{self.get_timestamp()}] {message}")
+        self.statusBar().showMessage(message)
+    
+    def get_timestamp(self):
+        """Get current timestamp"""
+        from datetime import datetime
+        return datetime.now().strftime("%H:%M:%S")
+    
+    def collect_images(self):
+        """Collect images from source directory"""
+        try:
+            dataset_root = Path(self.dataset_root_input.text())
+            source_dir = Path(self.source_dir_input.text())
+            
+            if not source_dir.exists():
+                self.log("❌ Error: Source directory does not exist")
+                return
+            
+            self.log("🔄 Collecting images...")
+            config = DatasetConfig()
+            self.dataset_manager = DatasetManager(dataset_root, config)
+            
+            result = self.dataset_manager.import_local_images(source_dir, copy=True)
+            
+            self.log(f"✅ Collected {result.images_collected} images")
+            if result.images_failed > 0:
+                self.log(f"⚠️ Failed: {result.images_failed} images")
+            
+            self.show_statistics()
+            
+        except Exception as e:
+            self.log(f"❌ Error: {str(e)}")
+    
+    def split_dataset(self):
+        """Split dataset into train/val/test"""
+        try:
+            if not self.dataset_manager:
+                dataset_root = Path(self.dataset_root_input.text())
+                config = DatasetConfig()
+                self.dataset_manager = DatasetManager(dataset_root, config)
+            
+            train = self.train_ratio.value()
+            val = self.val_ratio.value()
+            test = self.test_ratio.value()
+            
+            total = train + val + test
+            if abs(total - 1.0) > 0.01:
+                self.log(f"❌ Error: Ratios must sum to 1.0 (current: {total})")
+                return
+            
+            self.log("✂️ Splitting dataset...")
+            result = self.dataset_manager.split_dataset(train, val, test)
+            
+            self.log(f"✅ Split complete:")
+            self.log(f"   Train: {result['train']} images")
+            self.log(f"   Val: {result['val']} images")
+            self.log(f"   Test: {result['test']} images")
+            
+            self.show_statistics()
+            
+        except Exception as e:
+            self.log(f"❌ Error: {str(e)}")
+
+    
+    def show_statistics(self):
+        """Show dataset statistics"""
+        try:
+            if not self.dataset_manager:
+                dataset_root = Path(self.dataset_root_input.text())
+                config = DatasetConfig()
+                self.dataset_manager = DatasetManager(dataset_root, config)
+            
+            stats = self.dataset_manager.get_statistics()
+            
+            stats_text = f"""
+╔══════════════════════════════════════╗
+║       DATASET STATISTICS             ║
+╚══════════════════════════════════════╝
+
+📊 Total Images: {stats.total_images}
+💾 Total Size: {stats.total_size_bytes / (1024*1024):.2f} MB
+
+📁 Split Distribution:
+   🟢 Train: {stats.train_count} images
+   🟡 Val: {stats.val_count} images
+   🔴 Test: {stats.test_count} images
+"""
+            
+            if stats.class_distribution:
+                stats_text += "\n🏷️ Class Distribution:\n"
+                for class_name, count in stats.class_distribution.items():
+                    stats_text += f"   • {class_name}: {count}\n"
+            
+            self.stats_display.setText(stats_text)
+            self.log("✅ Statistics updated")
+            
+        except Exception as e:
+            self.log(f"❌ Error: {str(e)}")
+    
+    def start_training(self):
+        """Start model training"""
+        try:
+            self.log("🚀 Initializing training...")
+            
+            # Create configuration
+            config_manager = ConfigurationManager(self.yolo_version.currentText())
+            config = config_manager.create_default_config("general")
+            
+            config.model_architecture = self.model_arch.currentText()
+            config.epochs = self.epochs.value()
+            config.batch_size = self.batch_size.value()
+            config.image_size = int(self.image_size.currentText())
+            config.device = self.device.currentText()
+            config.num_classes = 1
+            config.class_names = ["baby"]
+            
+            output_dir = self.output_dir.text()
+            
+            # Disable training button
+            self.train_btn.setEnabled(False)
+            self.training_progress.setVisible(True)
+            
+            # Start training in background thread
+            self.training_thread = TrainingThread(config, output_dir)
+            self.training_thread.progress.connect(self.log)
+            self.training_thread.finished.connect(self.training_finished)
+            self.training_thread.start()
+            
+        except Exception as e:
+            self.log(f"❌ Error: {str(e)}")
+            self.train_btn.setEnabled(True)
+            self.training_progress.setVisible(False)
+    
+    def training_finished(self, metrics):
+        """Handle training completion"""
+        self.train_btn.setEnabled(True)
+        self.training_progress.setVisible(False)
+        
+        self.log("✅ Training completed!")
+        self.log(f"📊 Final mAP50: {metrics.get('map50', 0):.4f}")
+        self.log(f"📊 Precision: {metrics.get('precision', 0):.4f}")
+        self.log(f"📊 Recall: {metrics.get('recall', 0):.4f}")
+
+    
+    def evaluate_model(self):
+        """Evaluate trained model"""
+        try:
+            model_path = Path(self.model_path.text())
+            
+            if not model_path.exists():
+                self.log("❌ Error: Model file does not exist")
+                return
+            
+            self.log("📊 Evaluating model...")
+            
+            config = EvaluationConfig(
+                confidence_threshold=self.conf_threshold.value()
+            )
+            
+            evaluator = EvaluationModule(model_path, config)
+            result = evaluator.evaluate(self.eval_split.currentText())
+            
+            # Display results
+            results_text = f"""
+╔══════════════════════════════════════╗
+║       EVALUATION RESULTS             ║
+╚══════════════════════════════════════╝
+
+📊 Overall Metrics:
+   • Precision: {result.overall_metrics.precision:.4f}
+   • Recall: {result.overall_metrics.recall:.4f}
+   • F1 Score: {result.overall_metrics.f1_score:.4f}
+   • mAP50: {result.overall_metrics.map50:.4f}
+   • mAP50-95: {result.overall_metrics.map50_95:.4f}
+
+⚡ Performance:
+   • Total Images: {result.total_images}
+   • Avg Inference Time: {result.inference_time_ms:.2f} ms
+
+🎯 Confidence Threshold: {self.conf_threshold.value()}
+"""
+            
+            self.eval_results.setText(results_text)
+            self.log("✅ Evaluation complete!")
+            
+        except Exception as e:
+            self.log(f"❌ Error: {str(e)}")
+
+
+def main():
+    """Main entry point for GUI"""
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')  # Use Fusion style for better dark theme
+    
+    window = YOLOTrainingGUI()
+    window.show()
+    
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()
+
+
+    # Help menu methods
+    def show_help_dialog(self, title, content):
+        """Show a help dialog with formatted content"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setGeometry(150, 150, 900, 700)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Create scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        
+        # Create content widget
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        
+        # Add text
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setMarkdown(content)
+        text_edit.setStyleSheet("""
+            QTextEdit {
+                background-color: #0d1117;
+                color: #ffffff;
+                border: 2px solid #00ff88;
+                border-radius: 5px;
+                padding: 15px;
+                font-size: 13px;
+                line-height: 1.6;
+            }
+        """)
+        content_layout.addWidget(text_edit)
+        
+        scroll.setWidget(content_widget)
+        layout.addWidget(scroll)
+        
+        # Close button
+        close_btn = QPushButton("✅ Got it!")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.exec_()
+
+    
+    def show_quick_start(self):
+        """Show quick start guide"""
+        content = """
+# 🚀 Quick Start Guide
+
+## Welcome to YOLO Training Pipeline!
+
+This guide will get you started in **5 minutes**.
+
+---
+
+## Step 1: Prepare Your Images 📸
+
+You need images of babies (or whatever you want to detect).
+
+**Requirements:**
+- At least 100 images (300+ recommended)
+- Formats: .jpg, .jpeg, .png, or .bmp
+- Clear, good quality photos
+- Variety of angles and lighting
+
+---
+
+## Step 2: Collect Images 📁
+
+1. Go to **📁 Dataset** tab
+2. Click **📂 Browse** next to "Source Directory"
+3. Select your folder with baby images
+4. Click **🚀 Collect Images**
+5. Wait for completion message
+
+**What happens:** System validates images, removes duplicates, organizes them.
+
+---
+
+## Step 3: Split Dataset ✂️
+
+1. Stay in **📁 Dataset** tab
+2. Keep default ratios (0.7, 0.2, 0.1) or adjust
+3. Click **✂️ Split Dataset**
+
+**What happens:** Images divided into training (70%), validation (20%), and test (10%) sets.
+
+---
+
+## Step 4: Configure Training ⚙️
+
+1. Go to **🚀 Training** tab
+2. **For quick test:**
+   - Epochs: 10
+   - Batch Size: 8
+   - Model: yolov5s
+3. **For real training:**
+   - Epochs: 50-100
+   - Batch Size: 16
+   - Model: yolov5s or yolov5m
+
+---
+
+## Step 5: Start Training 🎯
+
+1. Click **🚀 Start Training**
+2. Watch progress in **📝 Logs** tab
+3. Wait for completion (10 min - 2 hours depending on settings)
+
+**What happens:** AI learns to detect babies from your images!
+
+---
+
+## Step 6: Evaluate Model 📊
+
+1. Go to **📊 Evaluation** tab
+2. Model path should be auto-filled
+3. Click **📊 Evaluate Model**
+4. Review metrics
+
+**Good results:**
+- Precision > 0.75 (75%)
+- Recall > 0.70 (70%)
+- mAP50 > 0.70 (70%)
+
+---
+
+## 🎉 Done!
+
+You've trained your first AI model!
+
+**Next steps:**
+- Try with more images
+- Increase epochs
+- Experiment with settings
+- Read other help sections
+
+---
+
+**Need more help?** Check other Help menu options!
+"""
+        self.show_help_dialog("🚀 Quick Start Guide", content)
+
+    
+    def show_about_project(self):
+        """Show about project information"""
+        content = """
+# 📖 About This Project
+
+## What Is This?
+
+**YOLO Training Pipeline** is a complete AI training system for object detection.
+
+It helps you train AI models to **detect and locate objects** in images - like babies, cars, animals, or anything else!
+
+---
+
+## What Does YOLO Mean?
+
+**YOLO = "You Only Look Once"**
+
+It's a fast, accurate AI technology for object detection.
+
+**Traditional detection:** Scan image slowly, piece by piece 🐌  
+**YOLO:** Look at entire image once, find everything instantly ⚡
+
+---
+
+## What Can You Do With This?
+
+### 1. Baby Detection 👶
+- Monitor baby in crib
+- Auto-tag baby photos
+- Safety alerts
+
+### 2. General Object Detection 🎯
+- Detect any object you train it on
+- Cars, animals, products, etc.
+- Custom applications
+
+### 3. Learn AI/ML 🎓
+- Understand how AI training works
+- Experiment with parameters
+- Build real projects
+
+---
+
+## Key Features
+
+✅ **Complete Pipeline**: Data → Training → Evaluation  
+✅ **Beautiful GUI**: High-tech interface  
+✅ **Easy to Use**: No coding required  
+✅ **Professional**: Production-ready quality  
+✅ **Ethical**: Responsible data handling  
+✅ **Well Documented**: Comprehensive guides
+
+---
+
+## Technology Stack
+
+- **Python 3.10**: Programming language
+- **PyQt5**: GUI framework
+- **YOLO**: AI object detection
+- **Pillow**: Image processing
+- **NumPy**: Math operations
+
+---
+
+## How It Works
+
+### Training Process:
+
+1. **Show AI examples** → "This is a baby"
+2. **AI learns patterns** → Shapes, colors, features
+3. **Test on new images** → Can it find babies?
+4. **Improve accuracy** → More training, better data
+
+### Result:
+
+A trained model that can detect babies in **any** photo, even ones it's never seen!
+
+---
+
+## Performance
+
+**Speed:** ~15ms per image (very fast!)  
+**Accuracy:** 75-90% with good training data  
+**Scalability:** Works on CPU or GPU
+
+---
+
+## Use Cases
+
+- 🏥 Healthcare monitoring
+- 🏠 Smart home systems
+- 📸 Photo organization
+- 🛡️ Safety systems
+- 🔬 Research tools
+- 📱 Mobile apps
+
+---
+
+## Why This Project?
+
+Most AI tools are either:
+- Too complex (need PhD to use)
+- Too simple (can't do real work)
+
+**This project is:**
+- ✅ Professional quality
+- ✅ Easy to use
+- ✅ Complete solution
+- ✅ Beautiful interface
+
+---
+
+**Ready to build something amazing?** 🚀
+"""
+        self.show_help_dialog("📖 About This Project", content)
+
+    
+    def show_how_to_use(self):
+        """Show how to use guide"""
+        content = """
+# 🎯 How to Use This Application
+
+## Complete Workflow Guide
+
+---
+
+## 📁 Dataset Tab
+
+### Collecting Images
+
+**Purpose:** Import your training images
+
+**Steps:**
+1. Set **Dataset Root** - where to store dataset
+2. Set **Source Directory** - where your images are
+3. Click **🚀 Collect Images**
+
+**What it does:**
+- Validates image formats (.jpg, .png, .bmp)
+- Checks minimum dimensions (32x32)
+- Removes duplicate images
+- Organizes into folders
+- Creates manifest file
+
+**Tips:**
+- Use 300+ images for best results
+- Ensure good image quality
+- Include variety (angles, lighting)
+
+---
+
+### Splitting Dataset
+
+**Purpose:** Divide images for training/testing
+
+**Steps:**
+1. Set split ratios (must sum to 1.0)
+   - Train: 0.7 (70% for training)
+   - Val: 0.2 (20% for validation)
+   - Test: 0.1 (10% for testing)
+2. Click **✂️ Split Dataset**
+
+**What it does:**
+- Randomly splits images
+- Moves to train/val/test folders
+- Updates manifest
+- Maintains reproducibility
+
+**Tips:**
+- Standard split: 70/20/10
+- More training data = better model
+- Keep test set separate!
+
+---
+
+### Viewing Statistics
+
+**Purpose:** Check dataset info
+
+**Steps:**
+1. Click **🔄 Refresh Statistics**
+
+**Shows:**
+- Total images
+- Dataset size (MB)
+- Split distribution
+- Class distribution
+
+---
+
+## 🚀 Training Tab
+
+### Configuring Training
+
+**Model Settings:**
+
+**YOLO Version:**
+- yolov5: Stable, well-tested
+- yolov8: Newer, potentially better
+
+**Model Architecture:**
+- yolov5n: Fastest, least accurate
+- yolov5s: Balanced (recommended)
+- yolov5m: More accurate, slower
+- yolov5l: Very accurate, slow
+- yolov5x: Most accurate, slowest
+
+**Training Parameters:**
+
+**Epochs:** How many times to train on all images
+- 10: Quick test
+- 50: Good training
+- 100+: Best results
+
+**Batch Size:** Images processed together
+- 4-8: Low memory
+- 16: Standard
+- 32+: High memory, faster
+
+**Image Size:** Input image dimensions
+- 320: Fastest
+- 416: Balanced
+- 640: Standard (recommended)
+- 1280: Highest quality
+
+**Device:**
+- cpu: Works everywhere
+- cuda: GPU acceleration (if available)
+
+---
+
+### Starting Training
+
+**Steps:**
+1. Configure settings
+2. Click **🚀 Start Training**
+3. Monitor in **📝 Logs** tab
+4. Wait for completion
+
+**What happens:**
+- Initializes YOLO model
+- Trains for specified epochs
+- Saves checkpoints every 10 epochs
+- Saves best model
+- Logs progress
+
+**Duration:**
+- 10 epochs: 5-15 minutes
+- 50 epochs: 30-90 minutes
+- 100 epochs: 1-3 hours
+
+---
+
+## 📊 Evaluation Tab
+
+### Evaluating Model
+
+**Purpose:** Test model accuracy
+
+**Steps:**
+1. Select model path (auto-filled after training)
+2. Choose dataset split (test recommended)
+3. Set confidence threshold (0.25 default)
+4. Click **📊 Evaluate Model**
+
+**What it shows:**
+- Precision: Detection accuracy
+- Recall: Detection completeness
+- F1 Score: Overall balance
+- mAP50: Primary metric
+- mAP50-95: Strict metric
+- Inference time: Speed
+
+**Good Results:**
+- Precision > 0.75
+- Recall > 0.70
+- mAP50 > 0.70
+
+---
+
+## 📝 Logs Tab
+
+### Monitoring Operations
+
+**Purpose:** See what's happening
+
+**Shows:**
+- Real-time operation logs
+- Success/error messages
+- Timestamps
+- Progress updates
+
+**Indicators:**
+- 🔄 Processing
+- ✅ Success
+- ❌ Error
+- ⚠️ Warning
+
+**Actions:**
+- **🗑️ Clear Logs**: Reset log display
+
+---
+
+## 💡 Best Practices
+
+### Data Quality
+1. Use clear, well-lit images
+2. Include variety
+3. Remove blurry/corrupted images
+4. Balance your dataset
+
+### Training Strategy
+1. Start with quick test (10 epochs)
+2. Verify everything works
+3. Increase to 50-100 epochs
+4. Monitor for overfitting
+
+### Troubleshooting
+1. Check logs for errors
+2. Reduce batch size if memory issues
+3. Ensure dataset is split
+4. Verify image paths
+
+---
+
+## 🎯 Common Workflows
+
+### Quick Test (5 minutes)
+1. Collect 50 images
+2. Split dataset
+3. Train 5 epochs, batch 4
+4. Evaluate
+
+### Standard Training (1 hour)
+1. Collect 300 images
+2. Split dataset
+3. Train 50 epochs, batch 16
+4. Evaluate
+
+### Production Training (3 hours)
+1. Collect 1000+ images
+2. Split dataset
+3. Train 100 epochs, batch 16
+4. Evaluate
+5. Fine-tune and retrain
+
+---
+
+**Need more help?** Check other Help menu options!
+"""
+        self.show_help_dialog("🎯 How to Use", content)
+
+    
+    def show_metrics_help(self):
+        """Show metrics explanation"""
+        content = """
+# 📊 Understanding Metrics
+
+## What Do These Numbers Mean?
+
+After evaluation, you see several metrics. Here's what they mean in simple terms!
+
+---
+
+## Precision 🎯
+
+**Question:** "When the AI says 'baby', is it correct?"
+
+**Formula:** Correct Detections / Total Detections
+
+**Example:**
+- AI detects 100 babies
+- 85 are actually babies
+- 15 are false alarms
+- **Precision = 0.85 (85%)**
+
+**What it means:**
+- 0.85 = 85% of detections are correct
+- Higher is better
+- Low precision = too many false alarms
+
+**Good values:**
+- > 0.80: Excellent
+- 0.70-0.80: Good
+- 0.60-0.70: Acceptable
+- < 0.60: Needs improvement
+
+---
+
+## Recall 🔍
+
+**Question:** "Does the AI find all the babies?"
+
+**Formula:** Correct Detections / Total Actual Babies
+
+**Example:**
+- 100 babies in images
+- AI finds 80 of them
+- Misses 20
+- **Recall = 0.80 (80%)**
+
+**What it means:**
+- 0.80 = Finds 80% of babies
+- Higher is better
+- Low recall = misses too many
+
+**Good values:**
+- > 0.80: Excellent
+- 0.70-0.80: Good
+- 0.60-0.70: Acceptable
+- < 0.60: Needs improvement
+
+---
+
+## F1 Score ⚖️
+
+**Question:** "What's the balance between precision and recall?"
+
+**Formula:** 2 × (Precision × Recall) / (Precision + Recall)
+
+**What it means:**
+- Harmonic mean of precision and recall
+- Single number for overall performance
+- Balances both metrics
+
+**Good values:**
+- > 0.80: Excellent
+- 0.70-0.80: Good
+- 0.60-0.70: Acceptable
+- < 0.60: Needs improvement
+
+---
+
+## mAP50 🏆
+
+**Full name:** Mean Average Precision at 50% IoU
+
+**Question:** "How accurate is the AI overall?"
+
+**What it means:**
+- Primary metric for object detection
+- Considers both detection and localization
+- 50% IoU = bounding box overlap threshold
+
+**Good values:**
+- > 0.75: Excellent
+- 0.65-0.75: Good
+- 0.55-0.65: Acceptable
+- < 0.55: Needs improvement
+
+**This is the MOST IMPORTANT metric!**
+
+---
+
+## mAP50-95 📈
+
+**Full name:** Mean Average Precision from 50% to 95% IoU
+
+**Question:** "How accurate with strict requirements?"
+
+**What it means:**
+- Average of mAP at different IoU thresholds
+- More strict than mAP50
+- Tests precise localization
+
+**Good values:**
+- > 0.60: Excellent
+- 0.50-0.60: Good
+- 0.40-0.50: Acceptable
+- < 0.40: Needs improvement
+
+---
+
+## Inference Time ⚡
+
+**Question:** "How fast is the AI?"
+
+**Measured in:** Milliseconds (ms) per image
+
+**What it means:**
+- Time to process one image
+- Lower is faster
+
+**Good values:**
+- < 20ms: Very fast (real-time capable)
+- 20-50ms: Fast
+- 50-100ms: Acceptable
+- > 100ms: Slow
+
+---
+
+## Real-World Examples
+
+### Example 1: Baby Monitor
+```
+Precision: 0.90 (90%)
+Recall: 0.85 (85%)
+mAP50: 0.87 (87%)
+```
+
+**Interpretation:**
+- ✅ Very accurate (90% correct detections)
+- ✅ Finds most babies (85%)
+- ✅ Excellent overall (87%)
+- **Result: Ready for production!**
+
+---
+
+### Example 2: Needs Improvement
+```
+Precision: 0.60 (60%)
+Recall: 0.55 (55%)
+mAP50: 0.57 (57%)
+```
+
+**Interpretation:**
+- ⚠️ Too many false alarms (60%)
+- ⚠️ Misses many babies (55%)
+- ⚠️ Below acceptable (57%)
+- **Result: Need more training/data**
+
+---
+
+## How to Improve Metrics
+
+### Low Precision (False Alarms)
+**Solutions:**
+- Increase confidence threshold
+- Add more negative examples
+- Train longer
+- Use larger model
+
+### Low Recall (Missing Objects)
+**Solutions:**
+- Decrease confidence threshold
+- Add more varied examples
+- Increase image size
+- Train longer
+
+### Low mAP (Overall Poor)
+**Solutions:**
+- Collect more images (300+)
+- Improve image quality
+- Increase epochs (50-100)
+- Use larger model
+- Better data variety
+
+---
+
+## Confidence Threshold 🎚️
+
+**What it is:** Minimum confidence to count as detection
+
+**Default:** 0.25 (25%)
+
+**Effects:**
+- **Higher (0.5):** Fewer detections, higher precision
+- **Lower (0.1):** More detections, higher recall
+
+**Tuning:**
+- Start with 0.25
+- Adjust based on use case
+- Safety-critical: Higher (0.5+)
+- Detection-critical: Lower (0.15-0.25)
+
+---
+
+## Summary
+
+**Most Important:**
+1. **mAP50** - Overall accuracy
+2. **Precision** - Correctness
+3. **Recall** - Completeness
+
+**Target Values:**
+- mAP50 > 0.70
+- Precision > 0.75
+- Recall > 0.70
+
+**If below targets:**
+- More images
+- More epochs
+- Better data quality
+
+---
+
+**Still confused?** That's okay! Focus on mAP50 - if it's above 0.70, you're doing great! 🎉
+"""
+        self.show_help_dialog("📊 Understanding Metrics", content)
+
+    
+    def show_troubleshooting(self):
+        """Show troubleshooting guide"""
+        content = """
+# 🔧 Troubleshooting Guide
+
+## Common Issues and Solutions
+
+---
+
+## 🚫 Collection Issues
+
+### "Source directory does not exist"
+
+**Problem:** Can't find your image folder
+
+**Solutions:**
+1. Check the path is correct
+2. Use the **📂 Browse** button
+3. Ensure folder exists
+4. Check spelling
+
+---
+
+### "No images collected"
+
+**Problem:** System found no valid images
+
+**Solutions:**
+1. Check image formats (.jpg, .png, .bmp)
+2. Verify images aren't corrupted
+3. Check minimum size (32x32 pixels)
+4. Look in Logs tab for specific errors
+
+---
+
+### "Failed: X images"
+
+**Problem:** Some images couldn't be imported
+
+**Reasons:**
+- Unsupported format (.gif, .webp, etc.)
+- Too small (< 32x32)
+- Corrupted files
+- Duplicate images
+
+**Solutions:**
+1. Check Logs tab for details
+2. Remove problematic images
+3. Convert to supported formats
+4. Increase minimum size if needed
+
+---
+
+## ✂️ Split Issues
+
+### "Ratios must sum to 1.0"
+
+**Problem:** Train + Val + Test ≠ 1.0
+
+**Solution:**
+- Adjust ratios to sum exactly to 1.0
+- Example: 0.7 + 0.2 + 0.1 = 1.0 ✅
+- Example: 0.8 + 0.2 + 0.1 = 1.1 ❌
+
+---
+
+### "No images to split"
+
+**Problem:** Dataset is empty
+
+**Solutions:**
+1. Collect images first
+2. Check Dataset Root path
+3. Verify images were imported
+
+---
+
+## 🚀 Training Issues
+
+### "Training failed"
+
+**Problem:** Training couldn't start
+
+**Solutions:**
+1. Check dataset is split
+2. Verify images exist in train folder
+3. Check Logs tab for specific error
+4. Ensure enough disk space
+
+---
+
+### "Out of memory" / Memory Error
+
+**Problem:** Not enough RAM/VRAM
+
+**Solutions:**
+1. **Reduce Batch Size:**
+   - Try 8 → 4 → 2
+2. **Reduce Image Size:**
+   - Try 640 → 416 → 320
+3. **Use Smaller Model:**
+   - yolov5s → yolov5n
+4. **Close Other Programs**
+5. **Use CPU instead of CUDA**
+
+---
+
+### Training is very slow
+
+**Problem:** Taking too long
+
+**Solutions:**
+1. **Reduce Epochs:**
+   - Start with 10 for testing
+2. **Reduce Batch Size:**
+   - Smaller batches = slower
+3. **Use GPU:**
+   - Change device to "cuda"
+4. **Use Smaller Model:**
+   - yolov5n is fastest
+
+---
+
+### Training stuck / frozen
+
+**Problem:** No progress for long time
+
+**Solutions:**
+1. Check Logs tab for errors
+2. Wait - first epoch is slowest
+3. Restart application
+4. Reduce batch size
+
+---
+
+## 📊 Evaluation Issues
+
+### "Model file does not exist"
+
+**Problem:** Can't find trained model
+
+**Solutions:**
+1. Check model path is correct
+2. Ensure training completed
+3. Look in output directory
+4. Check for .pt file
+
+---
+
+### Very low metrics (< 0.50)
+
+**Problem:** Model performs poorly
+
+**Solutions:**
+1. **More Images:**
+   - Need 300+ for good results
+2. **More Epochs:**
+   - Try 50-100 instead of 10
+3. **Better Data:**
+   - Clear, varied images
+   - Good lighting
+   - Multiple angles
+4. **Larger Model:**
+   - Try yolov5m instead of yolov5n
+
+---
+
+## 🖥️ GUI Issues
+
+### GUI won't start
+
+**Problem:** Application doesn't open
+
+**Solutions:**
+1. **Install PyQt5:**
+   ```
+   E:\test\Kiro_baby\.venv\Scripts\python.exe -m pip install PyQt5
+   ```
+2. **Check Python path**
+3. **Run from correct directory:**
+   ```
+   cd E:\test\Kiro_baby
+   ```
+
+---
+
+### GUI is slow / laggy
+
+**Problem:** Interface responds slowly
+
+**Solutions:**
+1. Close other applications
+2. Restart GUI
+3. Check system resources
+4. Update graphics drivers
+
+---
+
+### Can't see text / weird colors
+
+**Problem:** Display issues
+
+**Solutions:**
+1. Restart application
+2. Check display settings
+3. Try different monitor
+4. Update graphics drivers
+
+---
+
+## 📁 File/Path Issues
+
+### "Permission denied"
+
+**Problem:** Can't access files
+
+**Solutions:**
+1. Run as administrator
+2. Check file permissions
+3. Close files in other programs
+4. Check antivirus isn't blocking
+
+---
+
+### "Path not found"
+
+**Problem:** Can't find directory
+
+**Solutions:**
+1. Use absolute paths (C:\...)
+2. Check spelling
+3. Use Browse button
+4. Ensure folder exists
+
+---
+
+## 🔄 General Issues
+
+### Application crashes
+
+**Problem:** Unexpected closure
+
+**Solutions:**
+1. Check Logs tab before crash
+2. Restart application
+3. Check system resources
+4. Update dependencies:
+   ```
+   pip install --upgrade -r requirements.txt
+   ```
+
+---
+
+### "Import Error" / "Module not found"
+
+**Problem:** Missing dependencies
+
+**Solutions:**
+1. **Activate virtual environment:**
+   ```
+   E:\test\Kiro_baby\.venv\Scripts\activate.bat
+   ```
+2. **Install requirements:**
+   ```
+   pip install -r requirements.txt
+   ```
+3. **Check you're in project directory**
+
+---
+
+## 💡 Performance Tips
+
+### For Faster Training:
+- Use GPU (cuda)
+- Smaller model (yolov5n)
+- Smaller image size (416)
+- Larger batch size (if memory allows)
+
+### For Better Accuracy:
+- More images (300+)
+- More epochs (100+)
+- Larger model (yolov5m/l)
+- Better data quality
+
+### For Lower Memory:
+- Smaller batch size (4-8)
+- Smaller image size (320-416)
+- Smaller model (yolov5n)
+- Close other programs
+
+---
+
+## 🆘 Still Having Issues?
+
+### Check These:
+
+1. **Logs Tab** - Look for error messages
+2. **System Resources** - RAM, disk space
+3. **File Paths** - All paths correct?
+4. **Dependencies** - All installed?
+5. **Data Quality** - Images valid?
+
+### Get Help:
+
+1. Read other Help menu sections
+2. Check documentation files
+3. Review error messages carefully
+4. Try with smaller test dataset first
+
+---
+
+## 🎯 Quick Fixes
+
+**Most Common Issues:**
+
+1. **Memory Error** → Reduce batch size to 4
+2. **No images** → Check file formats
+3. **Training fails** → Split dataset first
+4. **Low accuracy** → More images + epochs
+5. **GUI won't start** → Install PyQt5
+
+---
+
+**Remember:** Most issues are simple fixes! Check the Logs tab first! 📝
+"""
+        self.show_help_dialog("🔧 Troubleshooting", content)
+    
+    def show_about(self):
+        """Show about dialog"""
+        QMessageBox.about(self, "About YOLO Training Pipeline",
+            """
+            <h2>🤖 YOLO Training Pipeline</h2>
+            <p><b>Version:</b> 1.0.0</p>
+            <p><b>AI Baby Detector Edition</b></p>
+            <br>
+            <p>A complete, professional-grade system for training YOLO object detection models.</p>
+            <br>
+            <p><b>Features:</b></p>
+            <ul>
+                <li>✅ Beautiful high-tech GUI</li>
+                <li>✅ Complete training pipeline</li>
+                <li>✅ Ethical data handling</li>
+                <li>✅ Professional quality</li>
+                <li>✅ Easy to use</li>
+            </ul>
+            <br>
+            <p><b>Technology:</b> Python 3.10, PyQt5, YOLO, Pillow</p>
+            <p><b>License:</b> MIT</p>
+            <br>
+            <p>Built with ❤️ for AI enthusiasts</p>
+            """)
