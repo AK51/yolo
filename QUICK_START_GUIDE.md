@@ -11,7 +11,7 @@
 
 ```bash
 # 1. Clone and navigate to project
-cd E:\test\Kiro_baby
+cd yolo-training-pipeline
 
 # 2. Activate virtual environment
 .venv\Scripts\activate  # Windows

@@ -34,33 +34,33 @@ dataset_root/
 
 ## Example:
 
-If your dataset root is: `E:\test\Kiro_baby\data\baby_dataset`
+If your dataset root is: `./data/my_dataset`
 
 Then your structure should be:
 ```
-E:\test\Kiro_baby\data\baby_dataset/
+./data/my_dataset/
 └── images/
     ├── train/
-    │   ├── baby001.jpg
-    │   ├── baby001.txt
-    │   ├── baby002.jpg
-    │   └── baby002.txt
+    │   ├── image001.jpg
+    │   ├── image001.txt
+    │   ├── image002.jpg
+    │   └── image002.txt
     ├── val/
-    │   ├── baby101.jpg
-    │   └── baby101.txt
+    │   ├── image101.jpg
+    │   └── image101.txt
     └── test/
-        ├── baby201.jpg
-        └── baby201.txt
+        ├── image201.jpg
+        └── image201.txt
 ```
 
 ## How to Set Up:
 
 ### Method 1: Using Labeling Tab
-1. Put all your images in a folder (e.g., `E:\test\Kiro_baby\my_images\`)
+1. Put all your images in a folder (e.g., `./my_images/`)
 2. Go to **Labeling** tab
 3. Load images and label them
-4. Labels are saved in the same folder as images
-5. Later, use **Dataset** tab to organize into train/val/test
+4. Labels are saved in a separate labels folder
+5. Later, use **Splitting** tab to organize into train/val/test
 
 ### Method 2: Manual Setup
 1. Create the folder structure manually

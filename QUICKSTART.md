@@ -4,18 +4,18 @@ This guide will help you get started with the YOLO Training Pipeline quickly.
 
 ## Prerequisites
 
-- Python 3.10 installed at: `C:\Users\andyk\AppData\Local\Programs\Python\Python310\`
-- Virtual environment created at: `E:\test\Kiro_baby\.venv`
+- Python 3.10+ installed
+- Virtual environment created at: `.venv`
 
 ## Step 1: Activate Virtual Environment
 
 ```cmd
-E:\test\Kiro_baby\.venv\Scripts\activate.bat
+.venv\Scripts\activate.bat
 ```
 
 Or in PowerShell:
 ```powershell
-E:\test\Kiro_baby\.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1
 ```
 
 ## Step 2: Verify Installation
@@ -120,13 +120,13 @@ Here's a complete example workflow:
 
 ```bash
 # 1. Activate environment
-E:\test\Kiro_baby\.venv\Scripts\activate.bat
+.venv\Scripts\activate.bat
 
 # 2. Collect images
-python -m src.cli collect --dataset-root ./data/baby_dataset --source local --source-dir C:\Users\YourName\Pictures\babies
+python -m src.cli collect --dataset-root ./data/my_dataset --source local --source-dir ./my_images
 
 # 3. Check stats
-python -m src.cli stats --dataset-root ./data/baby_dataset
+python -m src.cli stats --dataset-root ./data/my_dataset
 
 # 4. Split dataset
 python -m src.cli split --dataset-root ./data/baby_dataset --train 0.7 --val 0.2 --test 0.1

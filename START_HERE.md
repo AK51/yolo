@@ -2,7 +2,7 @@
 
 ## Welcome!
 
-You're about to train your first AI object detection model in just **5 minutes**!
+You're about to train your first AI object detection model!
 
 ---
 
@@ -17,28 +17,33 @@ launch_gui.bat
 
 **Or with Python**:
 ```bash
-E:\test\Kiro_baby\.venv\Scripts\python.exe launch_gui.py
+python launch_gui.py
 ```
 
-### Step 2: Wait for COCO8 to Load
+### Step 2: Prepare Your Dataset
 
-On first launch:
-- COCO8 dataset downloads automatically (~30 seconds)
-- GUI opens with dataset ready
-- You'll see: "🎉 COCO8 dataset loaded successfully!"
+You have two options:
 
-On subsequent launches:
-- Instant startup (no download)
-- Dataset auto-loads
-- Ready immediately!
+**Option A: Use Sample Dataset (coco128)**
+- Download coco128 dataset from Ultralytics
+- Place in `./coco128/` directory
+- Use for quick testing
+
+**Option B: Use Your Own Data**
+1. Collect images of what you want to detect
+2. Use the **🏷️ Labeling** tab to annotate
+3. Use the **📁 Splitting** tab to organize
 
 ### Step 3: Start Training
 
 1. Go to **🚀 Training** tab
-2. Keep default settings (or set Epochs to 10 for quick test)
+2. Configure settings:
+   - Select dataset YAML file
+   - Set epochs (10 for quick test, 50-100 for real training)
+   - Choose model architecture
 3. Click **🚀 Start Training**
-4. Wait ~5 minutes
-5. Done! Your first AI model is trained!
+4. Wait for training to complete
+5. Done! Your AI model is trained!
 
 ### Step 4: See Results
 
@@ -51,7 +56,7 @@ On subsequent launches:
 ## 📚 What Just Happened?
 
 You just:
-1. ✅ Downloaded a professional dataset (COCO8)
+1. ✅ Prepared a dataset
 2. ✅ Trained a YOLO object detection model
 3. ✅ Evaluated its performance
 4. ✅ Created a working AI system!
@@ -66,16 +71,15 @@ You just:
 
 Read these guides in order:
 
-1. **COCO8_QUICKSTART.md** - Detailed COCO8 guide
-2. **GUI_GUIDE.md** - Complete GUI walkthrough
-3. **LABELING_GUIDE.md** - How to label your own images
-4. **YOLO_DATASET_STRUCTURE.md** - Dataset organization
+1. **GUI_GUIDE.md** - Complete GUI walkthrough
+2. **LABELING_GUIDE.md** - How to label your own images
+3. **YOLO_DATASET_STRUCTURE.md** - Dataset organization
 
 ### Try Your Own Data
 
 1. **Collect Images**: Take 300+ photos of what you want to detect
 2. **Label Them**: Use the 🏷️ Labeling tab
-3. **Organize**: Use the 📁 Dataset tab
+3. **Organize**: Use the 📁 Splitting tab
 4. **Train**: Use the 🚀 Training tab
 5. **Evaluate**: Use the 📊 Evaluation tab
 6. **Test**: Use the 🧪 Test tab
@@ -84,8 +88,8 @@ Read these guides in order:
 
 Try different settings:
 - More epochs (50, 100)
-- Different models (yolov5s, yolov5m)
-- Different batch sizes (8, 16)
+- Different models (yolov8n, yolov8s, yolov8m)
+- Different batch sizes (8, 16, 32)
 - Different learning rates
 
 ---
@@ -95,8 +99,6 @@ Try different settings:
 ### Quick References
 
 - **START_HERE.md** (this file) - Quick start
-- **COCO8_QUICKSTART.md** - COCO8 training guide
-- **COCO8_AUTOLOAD.md** - Technical details
 - **QUICKSTART.md** - General quick start
 
 ### Complete Guides
@@ -108,7 +110,6 @@ Try different settings:
 
 ### Technical Documentation
 
-- **COCO8_IMPLEMENTATION_SUMMARY.md** - Implementation details
 - **IMPLEMENTATION_SUMMARY.md** - Project overview
 - **COMPLETE_SUMMARY.md** - Full project summary
 
@@ -128,19 +129,22 @@ Click **Help** menu:
 
 ### Common Issues
 
-**COCO8 won't download?**
-- Check internet connection
-- See COCO8_AUTOLOAD.md for manual download
-
 **Training fails?**
-- Reduce batch size to 2
+- Reduce batch size to 2 or 4
 - Check Logs tab for errors
 - See Troubleshooting in Help menu
+- Ensure dataset YAML is correct
 
 **Low metrics?**
-- Normal for 8 images!
-- Try 50 epochs
-- Use your own dataset (300+ images)
+- Normal for small datasets!
+- Try 50-100 epochs
+- Use larger dataset (300+ images)
+- Check if labels are correct
+
+**Can't find dataset?**
+- Check dataset path in Training tab
+- Ensure YAML file exists
+- Verify images and labels are in correct folders
 
 ---
 
@@ -149,15 +153,16 @@ Click **Help** menu:
 ### Beginner (You are here!)
 
 1. ✅ Launch application
-2. ✅ Train with COCO8 (10 epochs)
-3. ✅ Evaluate results
-4. ✅ Understand the interface
+2. ✅ Prepare a dataset (coco128 or your own)
+3. ✅ Train a model (10 epochs for quick test)
+4. ✅ Evaluate results
+5. ✅ Understand the interface
 
 ### Intermediate
 
-1. Train with COCO8 (50 epochs)
+1. Train with more epochs (50-100)
 2. Experiment with parameters
-3. Try different models
+3. Try different models (yolov8n, yolov8s, yolov8m)
 4. Read all documentation
 
 ### Advanced
@@ -184,7 +189,6 @@ Click **Help** menu:
 ### What Makes It Special
 
 ✅ **Beautiful GUI**: High-tech dark theme
-✅ **Auto-Setup**: COCO8 downloads automatically
 ✅ **Complete Pipeline**: End-to-end solution
 ✅ **Professional**: Production-ready quality
 ✅ **Easy to Use**: No coding required
@@ -247,18 +251,18 @@ You'll know you're successful when:
 ### Right Now
 
 1. Double-click `launch_gui.bat`
-2. Wait for COCO8 to load
+2. Prepare your dataset (coco128 or your own)
 3. Go to Training tab
-4. Click "Start Training"
-5. Celebrate your first AI model! 🎉
+4. Configure settings and select dataset
+5. Click "Start Training"
+6. Celebrate your first AI model! 🎉
 
 ### After First Success
 
-1. Read COCO8_QUICKSTART.md
-2. Try different parameters
-3. Explore all tabs
-4. Read Help menu sections
-5. Plan your custom project
+1. Try different parameters
+2. Explore all tabs
+3. Read Help menu sections
+4. Plan your custom project
 
 ---
 
@@ -286,7 +290,6 @@ Everything is set up and ready to go:
 
 ✅ **Environment**: Virtual environment configured
 ✅ **Dependencies**: All packages installed
-✅ **Dataset**: COCO8 auto-downloads
 ✅ **GUI**: Beautiful interface ready
 ✅ **Documentation**: Comprehensive guides
 ✅ **Support**: Help system included
@@ -310,6 +313,7 @@ Remember:
 
 Created by Andy Kong
 
-**Last Updated**: January 31, 2026
+**Last Updated**: February 16, 2026
 
-**Version**: 1.0.0 with COCO8 Auto-Load
+**Version**: 2.0.0
+

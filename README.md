@@ -1,7 +1,4 @@
-
-# YOLO Object Detection and Segmentation Training Pipeline
-<img width="1260" height="716" alt="front" src="https://github.com/user-attachments/assets/0ec22b10-965c-4399-87d4-d36a3e36fae5" />
-
+# YOLO Object Detection Training Pipeline
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -37,18 +34,35 @@ cd yolo-training-pipeline
 2. **Create virtual environment**
 ```bash
 python -m venv .venv
-# Windows:
+```
+
+3. **Activate virtual environment**
+
+**⚠️ IMPORTANT: Always activate the virtual environment before running the application!**
+
+**Windows (PowerShell):**
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+**Windows (Command Prompt):**
+```cmd
 .venv\Scripts\activate
-# Linux/Mac:
+```
+
+**Linux/Mac:**
+```bash
 source .venv/bin/activate
 ```
 
-3. **Install dependencies**
+4. **Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
 ### Launch GUI
+
+**⚠️ Make sure the virtual environment is activated first!**
 
 **Windows:**
 ```cmd
@@ -122,6 +136,12 @@ The application features 7 main tabs:
 - Stream recording
 
 ## 🛠️ CLI Usage
+
+**⚠️ Note: Activate the virtual environment before running CLI commands:**
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+```
 
 ### Collect Dataset
 ```bash
@@ -251,5 +271,3 @@ For questions or support, please open an issue on GitHub.
 ---
 
 **Made with ❤️ for the Computer Vision community**
-
-

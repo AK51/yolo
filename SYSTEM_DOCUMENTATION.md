@@ -68,7 +68,7 @@ The YOLO Training Pipeline is a comprehensive Python-based system for training c
 
 ### Directory Structure
 ```
-E:\test\Kiro_baby\
+yolo-training-pipeline/
 ├── src/                          # Source code
 │   ├── annotation/               # Annotation processing
 │   ├── config/                   # Configuration management

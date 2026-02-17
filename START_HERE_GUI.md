@@ -30,7 +30,7 @@ After launching, you should see:
 ========================================
 
 Python location:
-   E:\test\Kiro_baby\.venv\Scripts\python.exe
+   .venv\Scripts\python.exe
 
 Checking PyTorch installation...
   PyTorch version: 2.1.0+cu121
