@@ -3,6 +3,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PyQt5](https://img.shields.io/badge/GUI-PyQt5-green.svg)](https://pypi.org/project/PyQt5/)
+<img width="1280" height="643" alt="front_test" src="https://github.com/user-attachments/assets/0f38e9d6-e98e-4733-b10d-195dd7c38723" />
 
 A complete, professional-grade system for training custom YOLO object detection models with an intuitive GUI, ethical data sourcing, and comprehensive dataset management.
 
@@ -271,3 +272,4 @@ For questions or support, please open an issue on GitHub.
 ---
 
 **Made with ❤️ for the Computer Vision community**
+
