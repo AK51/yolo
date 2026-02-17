@@ -45,6 +45,14 @@ class ImageCanvas(QLabel):
         self.drawing = False
         self.hovered_bbox = -1
         
+        # Box editing state (move and resize)
+        self.selected_bbox = -1  # Index of selected bbox for editing
+        self.dragging_bbox = False  # True when dragging a box
+        self.resizing_bbox = False  # True when resizing a box
+        self.resize_handle = None  # Which handle: 'tl', 'tr', 'bl', 'br', 't', 'b', 'l', 'r'
+        self.drag_start_point = None  # Starting point for drag/resize
+        self.bbox_backup = None  # Backup of bbox before editing
+        
         # Drawing state for polygons
         self.polygon_points = []  # List of normalized points for current polygon
         self.drawing_polygon = False
@@ -245,6 +253,59 @@ class ImageCanvas(QLabel):
                 return i
         return -1
     
+    def _get_resize_handle(self, x, y, bbox_idx):
+        """Check if point is near a resize handle of the bbox. Returns handle name or None."""
+        if bbox_idx < 0 or bbox_idx >= len(self.bboxes):
+            return None
+        
+        rect = self._normalized_to_screen_rect(self.bboxes[bbox_idx])
+        if not rect:
+            return None
+        
+        handle_size = 8  # Size of resize handle hit area
+        
+        # Get corner and edge positions
+        left = rect.left()
+        right = rect.right()
+        top = rect.top()
+        bottom = rect.bottom()
+        center_x = rect.center().x()
+        center_y = rect.center().y()
+        
+        # Check corners first (higher priority)
+        if abs(x - left) <= handle_size and abs(y - top) <= handle_size:
+            return 'tl'  # Top-left
+        if abs(x - right) <= handle_size and abs(y - top) <= handle_size:
+            return 'tr'  # Top-right
+        if abs(x - left) <= handle_size and abs(y - bottom) <= handle_size:
+            return 'bl'  # Bottom-left
+        if abs(x - right) <= handle_size and abs(y - bottom) <= handle_size:
+            return 'br'  # Bottom-right
+        
+        # Check edges
+        if abs(x - left) <= handle_size and top < y < bottom:
+            return 'l'  # Left edge
+        if abs(x - right) <= handle_size and top < y < bottom:
+            return 'r'  # Right edge
+        if abs(y - top) <= handle_size and left < x < right:
+            return 't'  # Top edge
+        if abs(y - bottom) <= handle_size and left < x < right:
+            return 'b'  # Bottom edge
+        
+        return None
+    
+    def _get_cursor_for_handle(self, handle):
+        """Get appropriate cursor for resize handle"""
+        if handle in ['tl', 'br']:
+            return Qt.SizeFDiagCursor
+        elif handle in ['tr', 'bl']:
+            return Qt.SizeBDiagCursor
+        elif handle in ['t', 'b']:
+            return Qt.SizeVerCursor
+        elif handle in ['l', 'r']:
+            return Qt.SizeHorCursor
+        return Qt.ArrowCursor
+    
     def mousePressEvent(self, event):
         """Handle mouse press"""
         if not self.original_pixmap:
@@ -263,23 +324,48 @@ class ImageCanvas(QLabel):
             bbox_idx = self._find_bbox_at_point(x, y)
             if bbox_idx >= 0:
                 del self.bboxes[bbox_idx]
+                self.selected_bbox = -1
                 self.bbox_deleted.emit(bbox_idx)
                 self.update()
             return
         
-        # Left click - create bbox or add polygon point
+        # Left click - create bbox, move bbox, resize bbox, or add polygon point
         if event.button() == Qt.LeftButton:
             norm_x, norm_y = self._screen_to_image_coords(x, y)
             if norm_x is None:
                 return
             
             if self.drawing_mode == 'bbox':
-                # Bounding box mode
-                if not self.drawing:
-                    # First click - start drawing
+                # Check if clicking on an existing bbox for editing
+                bbox_idx = self._find_bbox_at_point(x, y)
+                
+                if bbox_idx >= 0 and not self.drawing:
+                    # Clicked on existing bbox - check for resize handle or move
+                    self.selected_bbox = bbox_idx
+                    handle = self._get_resize_handle(x, y, bbox_idx)
+                    
+                    if handle:
+                        # Start resizing
+                        self.resizing_bbox = True
+                        self.resize_handle = handle
+                        self.drag_start_point = (x, y)
+                        self.bbox_backup = list(self.bboxes[bbox_idx])
+                    else:
+                        # Start moving
+                        self.dragging_bbox = True
+                        self.drag_start_point = (x, y)
+                        self.bbox_backup = list(self.bboxes[bbox_idx])
+                    
+                    self.update()
+                    return
+                
+                # Not clicking on existing bbox - draw new bbox
+                if not self.drawing and not self.dragging_bbox and not self.resizing_bbox:
+                    # First click - start drawing new bbox
                     self.first_point = (norm_x, norm_y)
                     self.drawing = True
-                else:
+                    self.selected_bbox = -1
+                elif self.drawing:
                     # Second click - finish drawing
                     if self.first_point:
                         x1, y1 = self.first_point
@@ -333,12 +419,110 @@ class ImageCanvas(QLabel):
         self.drawing_polygon = False
         self.update()
     
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release"""
+        if event.button() == Qt.LeftButton:
+            # End dragging or resizing
+            if self.dragging_bbox or self.resizing_bbox:
+                self.dragging_bbox = False
+                self.resizing_bbox = False
+                self.resize_handle = None
+                self.drag_start_point = None
+                self.bbox_backup = None
+                self.setCursor(Qt.ArrowCursor)
+                self.update()
+    
     def mouseMoveEvent(self, event):
         """Handle mouse move"""
         if not self.original_pixmap:
             return
         
         x, y = event.x(), event.y()
+        norm_x, norm_y = self._screen_to_image_coords(x, y)
+        
+        # Handle dragging bbox (move)
+        if self.dragging_bbox and self.selected_bbox >= 0 and self.drag_start_point:
+            if norm_x is not None and norm_y is not None:
+                dx_screen = x - self.drag_start_point[0]
+                dy_screen = y - self.drag_start_point[1]
+                
+                # Convert screen delta to normalized delta
+                img_width = self.scaled_pixmap.width()
+                img_height = self.scaled_pixmap.height()
+                dx_norm = dx_screen / img_width
+                dy_norm = dy_screen / img_height
+                
+                # Update bbox position
+                bbox = self.bboxes[self.selected_bbox]
+                bbox[1] = self.bbox_backup[1] + dx_norm  # x_center
+                bbox[2] = self.bbox_backup[2] + dy_norm  # y_center
+                
+                # Clamp to image bounds
+                half_width = bbox[3] / 2
+                half_height = bbox[4] / 2
+                bbox[1] = max(half_width, min(1 - half_width, bbox[1]))
+                bbox[2] = max(half_height, min(1 - half_height, bbox[2]))
+                
+                self.update()
+            return
+        
+        # Handle resizing bbox
+        if self.resizing_bbox and self.selected_bbox >= 0 and self.drag_start_point and self.resize_handle:
+            if norm_x is not None and norm_y is not None:
+                bbox = self.bboxes[self.selected_bbox]
+                backup = self.bbox_backup
+                
+                # Get current bbox bounds in normalized coords
+                x_center, y_center, width, height = backup[1], backup[2], backup[3], backup[4]
+                left = x_center - width / 2
+                right = x_center + width / 2
+                top = y_center - height / 2
+                bottom = y_center + height / 2
+                
+                # Calculate mouse delta in normalized coords
+                dx_screen = x - self.drag_start_point[0]
+                dy_screen = y - self.drag_start_point[1]
+                img_width = self.scaled_pixmap.width()
+                img_height = self.scaled_pixmap.height()
+                dx_norm = dx_screen / img_width
+                dy_norm = dy_screen / img_height
+                
+                # Update bounds based on which handle is being dragged
+                if 'l' in self.resize_handle:  # Left edge
+                    left = min(backup[1] - backup[3]/2 + dx_norm, right - 0.02)
+                if 'r' in self.resize_handle:  # Right edge
+                    right = max(backup[1] + backup[3]/2 + dx_norm, left + 0.02)
+                if 't' in self.resize_handle:  # Top edge
+                    top = min(backup[2] - backup[4]/2 + dy_norm, bottom - 0.02)
+                if 'b' in self.resize_handle:  # Bottom edge
+                    bottom = max(backup[2] + backup[4]/2 + dy_norm, top + 0.02)
+                
+                # Clamp to image bounds
+                left = max(0, left)
+                right = min(1, right)
+                top = max(0, top)
+                bottom = min(1, bottom)
+                
+                # Update bbox
+                bbox[1] = (left + right) / 2  # x_center
+                bbox[2] = (top + bottom) / 2  # y_center
+                bbox[3] = right - left  # width
+                bbox[4] = bottom - top  # height
+                
+                self.update()
+            return
+        
+        # Update cursor based on hover state
+        if self.drawing_mode == 'bbox' and not self.drawing:
+            bbox_idx = self._find_bbox_at_point(x, y)
+            if bbox_idx >= 0:
+                handle = self._get_resize_handle(x, y, bbox_idx)
+                if handle:
+                    self.setCursor(self._get_cursor_for_handle(handle))
+                else:
+                    self.setCursor(Qt.SizeAllCursor)  # Move cursor
+            else:
+                self.setCursor(Qt.ArrowCursor)
         
         # Update hovered bbox
         old_hovered = self.hovered_bbox
@@ -348,19 +532,41 @@ class ImageCanvas(QLabel):
         
         # Update current point while drawing bbox
         if self.drawing_mode == 'bbox' and self.drawing and self.first_point:
-            norm_x, norm_y = self._screen_to_image_coords(x, y)
             if norm_x is not None:
                 self.current_point = (norm_x, norm_y)
                 self.update()
     
     def keyPressEvent(self, event):
         """Handle key press"""
-        # Escape - cancel current drawing
+        # Delete key - delete selected bbox
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+            if self.drawing_mode == 'bbox' and self.selected_bbox >= 0:
+                # Delete the selected bbox
+                deleted_bbox = self.bboxes.pop(self.selected_bbox)
+                self.bbox_deleted.emit(self.selected_bbox)
+                self.selected_bbox = -1
+                self.setCursor(Qt.ArrowCursor)
+                self.update()
+                return
+        
+        # Escape - cancel current drawing, deselect bbox, or delete selected bbox
         if event.key() == Qt.Key_Escape:
             if self.drawing_mode == 'bbox':
-                self.first_point = None
-                self.current_point = None
-                self.drawing = False
+                # If a bbox is selected, delete it
+                if self.selected_bbox >= 0:
+                    deleted_bbox = self.bboxes.pop(self.selected_bbox)
+                    self.bbox_deleted.emit(self.selected_bbox)
+                    self.selected_bbox = -1
+                    self.setCursor(Qt.ArrowCursor)
+                else:
+                    # Otherwise, cancel drawing
+                    self.first_point = None
+                    self.current_point = None
+                    self.drawing = False
+                    self.dragging_bbox = False
+                    self.resizing_bbox = False
+                    self.resize_handle = None
+                    self.setCursor(Qt.ArrowCursor)
             elif self.drawing_mode == 'polygon':
                 self.polygon_points = []
                 self.drawing_polygon = False
@@ -388,8 +594,12 @@ class ImageCanvas(QLabel):
             class_id = int(bbox[0])
             color = self.bbox_colors[class_id % len(self.bbox_colors)]
             
-            # Highlight hovered box
-            if i == self.hovered_bbox:
+            # Highlight selected or hovered box
+            if i == self.selected_bbox:
+                pen = QPen(color, 4, Qt.SolidLine)
+                painter.setPen(pen)
+                painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 40)))
+            elif i == self.hovered_bbox:
                 pen = QPen(color, 3, Qt.SolidLine)
                 painter.setPen(pen)
                 painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 30)))
@@ -399,6 +609,25 @@ class ImageCanvas(QLabel):
                 painter.setBrush(Qt.NoBrush)
             
             painter.drawRect(rect)
+            
+            # Draw resize handles for selected bbox
+            if i == self.selected_bbox:
+                handle_size = 6
+                handle_color = QColor(255, 255, 255)
+                painter.setPen(QPen(color, 2))
+                painter.setBrush(QBrush(handle_color))
+                
+                # Corner handles
+                painter.drawEllipse(rect.topLeft(), handle_size, handle_size)
+                painter.drawEllipse(rect.topRight(), handle_size, handle_size)
+                painter.drawEllipse(rect.bottomLeft(), handle_size, handle_size)
+                painter.drawEllipse(rect.bottomRight(), handle_size, handle_size)
+                
+                # Edge handles
+                painter.drawEllipse(QPoint(rect.center().x(), rect.top()), handle_size, handle_size)
+                painter.drawEllipse(QPoint(rect.center().x(), rect.bottom()), handle_size, handle_size)
+                painter.drawEllipse(QPoint(rect.left(), rect.center().y()), handle_size, handle_size)
+                painter.drawEllipse(QPoint(rect.right(), rect.center().y()), handle_size, handle_size)
             
             # Draw class name
             if self.show_class_names and class_id < len(self.class_names):

@@ -25,6 +25,206 @@ from src.models import DatasetConfig, EvaluationConfig
 from src.gui.image_canvas import ImageCanvas
 
 
+class LoadingDialog(QDialog):
+    """Loading dialog with progress bar"""
+    
+    def __init__(self, parent=None, title="Loading", message="Please wait..."):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setMinimumWidth(400)
+        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+        
+        # Apply dark theme
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1a1a2e;
+                color: #ffffff;
+            }
+            QLabel {
+                color: #ffffff;
+                font-size: 21px;
+                padding: 10px;
+            }
+            QProgressBar {
+                border: 2px solid #00ff88;
+                border-radius: 5px;
+                text-align: center;
+                background-color: #16213e;
+                color: #00ff88;
+                font-size: 19px;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: #00ff88;
+                border-radius: 3px;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        
+        # Message label
+        self.message_label = QLabel(message)
+        self.message_label.setAlignment(Qt.AlignCenter)
+        self.message_label.setWordWrap(True)
+        layout.addWidget(self.message_label)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)  # Indeterminate progress
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("Processing...")
+        layout.addWidget(self.progress_bar)
+        
+        # Status label
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("font-size: 19px; color: #00ff88; font-style: italic;")
+        layout.addWidget(self.status_label)
+    
+    def update_message(self, message):
+        """Update the main message"""
+        self.message_label.setText(message)
+    
+    def update_status(self, status):
+        """Update the status label"""
+        self.status_label.setText(status)
+    
+    def set_progress(self, value, maximum=100):
+        """Set progress bar to determinate mode with value"""
+        self.progress_bar.setRange(0, maximum)
+        self.progress_bar.setValue(value)
+        self.progress_bar.setFormat(f"{value}/{maximum}")
+
+
+class DetectionThread(QThread):
+    """Background thread for running detection"""
+    progress = pyqtSignal(str)  # Progress message
+    finished = pyqtSignal(object, int, float, object)  # result_image, detection_count, inference_time, temp_path
+    error = pyqtSignal(str)  # Error message
+    
+    def __init__(self, model_path, input_path, confidence, input_type):
+        super().__init__()
+        self.model_path = model_path
+        self.input_path = input_path
+        self.confidence = confidence
+        self.input_type = input_type
+    
+    def run(self):
+        try:
+            import time
+            import warnings
+            from PIL import Image, ImageDraw, ImageFont
+            import cv2
+            from ultralytics import YOLO
+            
+            # Suppress YOLO warnings
+            warnings.filterwarnings('ignore')
+            import logging
+            logging.getLogger('ultralytics').setLevel(logging.ERROR)
+            
+            # Load YOLO model
+            self.progress.emit("Loading model...")
+            model = YOLO(str(self.model_path))
+            
+            # Get class names from model
+            class_names = []
+            if hasattr(model, 'names'):
+                class_names = [model.names[i] for i in sorted(model.names.keys())]
+                self.progress.emit(f"Detected {len(class_names)} classes")
+            
+            # Load image
+            self.progress.emit("Loading image...")
+            if self.input_type == "Video":
+                # For video, extract first frame
+                cap = cv2.VideoCapture(str(self.input_path))
+                ret, frame = cap.read()
+                cap.release()
+                
+                if not ret:
+                    self.error.emit("Could not read video")
+                    return
+                
+                # Convert BGR to RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame_rgb)
+            else:
+                img = Image.open(self.input_path)
+            
+            # Run detection
+            self.progress.emit("Running inference...")
+            start_time = time.time()
+            
+            results = model.predict(
+                source=img,
+                conf=self.confidence,
+                verbose=False,
+                stream=False
+            )
+            
+            inference_time = (time.time() - start_time) * 1000
+            
+            # Get detections from results
+            self.progress.emit("Drawing bounding boxes...")
+            result = results[0]
+            boxes = result.boxes
+            
+            # Draw bounding boxes
+            draw = ImageDraw.Draw(img)
+            
+            colors = [
+                (0, 255, 136),   # Neon green
+                (255, 100, 100), # Red
+                (100, 150, 255), # Blue
+                (255, 200, 0),   # Yellow
+                (255, 0, 255),   # Magenta
+            ]
+            
+            detection_count = 0
+            for box in boxes:
+                # Get box coordinates (xyxy format)
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                conf = float(box.conf[0])
+                class_id = int(box.cls[0])
+                
+                # Draw box
+                color = colors[class_id % len(colors)]
+                draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+                
+                # Get class name
+                if class_names and class_id < len(class_names):
+                    class_name = class_names[class_id]
+                elif hasattr(model, 'names') and class_id in model.names:
+                    class_name = model.names[class_id]
+                else:
+                    class_name = f"Class {class_id}"
+                
+                label = f"{class_name} {conf:.2f}"
+                
+                # Draw label background
+                try:
+                    font = ImageFont.truetype("arial.ttf", 16)
+                except:
+                    font = ImageFont.load_default()
+                
+                bbox = draw.textbbox((x1, y1 - 20), label, font=font)
+                draw.rectangle(bbox, fill=color)
+                draw.text((x1, y1 - 20), label, fill=(26, 26, 46), font=font)
+                
+                detection_count += 1
+            
+            # Save result to temp file
+            self.progress.emit("Saving result...")
+            temp_path = Path("./temp_detection_result.jpg")
+            img.save(temp_path)
+            
+            # Emit finished signal with results
+            self.finished.emit(img, detection_count, inference_time, temp_path)
+            
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class TrainingThread(QThread):
     """Background thread for training"""
     progress = pyqtSignal(str)
@@ -549,8 +749,8 @@ class YOLOTrainingGUI(QMainWindow):
         main_layout.addWidget(title)
         
         # Create tabs
-        tabs = QTabWidget()
-        tabs.setStyleSheet("""
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet("""
             QTabWidget::pane {
                 border: 2px solid #00ff88;
                 background: #1a1a2e;
@@ -569,21 +769,29 @@ class YOLOTrainingGUI(QMainWindow):
         """)
         
         # Add tabs
-        tabs.addTab(self.create_labeling_tab(), "🏷️ Labeling")
-        tabs.addTab(self.create_dataset_tab(), "📁 Splitting")
-        tabs.addTab(self.create_training_tab(), "🚀 Training")
-        tabs.addTab(self.create_evaluation_tab(), "📊 Evaluation")
-        tabs.addTab(self.create_test_tab(), "🧪 Test")
-        tabs.addTab(self.create_rtsp_tab(), "📡 RTSP")
-        tabs.addTab(self.create_usbcam_tab(), "📹 USB Cam")
-        tabs.addTab(self.create_logs_tab(), "📝 Logs")
-        tabs.addTab(self.create_help_tab(), "❓ Help")
+        self.tabs.addTab(self.create_labeling_tab(), "🏷️ Labeling")
+        self.tabs.addTab(self.create_dataset_tab(), "📁 Splitting")
+        self.tabs.addTab(self.create_training_tab(), "🚀 Training")
+        self.tabs.addTab(self.create_test_tab(), "🧪 Test")
+        self.tabs.addTab(self.create_rtsp_tab(), "📡 RTSP")
+        self.tabs.addTab(self.create_usbcam_tab(), "📹 USB Cam")
+        self.tabs.addTab(self.create_logs_tab(), "📝 Logs")
+        self.tabs.addTab(self.create_help_tab(), "❓ Help")
         
-        main_layout.addWidget(tabs)
+        # Connect tab change handler
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+        
+        main_layout.addWidget(self.tabs)
         
         # Status bar
         self.statusBar().showMessage("Ready")
         self.statusBar().setStyleSheet("background: #16213e; color: #00ff88; padding: 5px;")
+        
+        # Log any initialization messages that were deferred
+        if hasattr(self, '_init_messages'):
+            for message in self._init_messages:
+                self.log(message)
+            delattr(self, '_init_messages')
     
     def create_menu_bar(self):
         """Create menu bar"""
@@ -853,7 +1061,7 @@ class YOLOTrainingGUI(QMainWindow):
         # Row 0: Source Directory
         collect_layout.addWidget(QLabel("Source Directory:"), 0, 0)
         self.source_dir_input = QLineEdit()
-        self.source_dir_input.setPlaceholderText("Path to images folder")
+        self.source_dir_input.setPlaceholderText("data/my_dataset/")
         collect_layout.addWidget(self.source_dir_input, 0, 1)
         
         browse_source_btn = QPushButton("📂 Browse")
@@ -863,7 +1071,7 @@ class YOLOTrainingGUI(QMainWindow):
         # Row 1: YAML Config
         collect_layout.addWidget(QLabel("YAML Config:"), 1, 0)
         self.dataset_yaml_input = QLineEdit()
-        self.dataset_yaml_input.setPlaceholderText("Optional: YAML file for auto-config")
+        self.dataset_yaml_input.setPlaceholderText("data/my_dataset/data.yaml")
         collect_layout.addWidget(self.dataset_yaml_input, 1, 1)
         
         browse_dataset_yaml_btn = QPushButton("📂 Browse")
@@ -912,6 +1120,24 @@ class YOLOTrainingGUI(QMainWindow):
         split_btn.clicked.connect(self.split_dataset)
         split_layout.addWidget(split_btn, 3, 0, 1, 2)
         
+        # Output Path (read-only, populated after splitting)
+        split_layout.addWidget(QLabel("Output Path:"), 4, 0)
+        self.split_output_path = QLineEdit()
+        self.split_output_path.setReadOnly(True)
+        self.split_output_path.setPlaceholderText("Output path will appear here after splitting")
+        self.split_output_path.setStyleSheet("""
+            QLineEdit {
+                background-color: #0d1117;
+                color: #00ff88;
+                border: 2px solid #00ff88;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 21px;
+                font-weight: bold;
+            }
+        """)
+        split_layout.addWidget(self.split_output_path, 4, 1)
+        
         split_group.setLayout(split_layout)
         layout.addWidget(split_group)
         
@@ -928,8 +1154,104 @@ class YOLOTrainingGUI(QMainWindow):
         layout.addWidget(stats_group, 1)  # Stretch factor of 1 to expand
         
         # Remove the addStretch() so stats_group can expand to bottom
-        return self._make_scrollable(widget)
-
+        
+        return widget
+    
+    def on_tab_changed(self, index):
+        """Handle tab change event"""
+        # Check if switching to Splitting tab (index 1)
+        if index == 1:
+            self.populate_splitting_from_labeling()
+        # Check if switching to Training tab (index 2)
+        elif index == 2:
+            self.populate_training_from_splitting()
+    
+    def populate_training_from_splitting(self):
+        """Populate Training tab fields from Splitting tab output paths"""
+        try:
+            # Use the stored output paths from splitting operations
+            # These are set after collect_images() or split_dataset() completes
+            
+            # Check if we have stored output paths from splitting
+            if hasattr(self, 'splitting_output_yaml') and self.splitting_output_yaml:
+                yaml_config = self.splitting_output_yaml
+                current_yaml = self.train_yaml_file.text().strip()
+                # Update if empty or still has default value
+                if not current_yaml or current_yaml == "./coco128/coco128.yaml":
+                    self.train_yaml_file.setText(yaml_config)
+                    self.log(f"📄 Auto-populated Training YAML Config: {yaml_config}")
+            
+            # Populate Dataset Root from stored output path
+            if hasattr(self, 'splitting_output_dataset_root') and self.splitting_output_dataset_root:
+                dataset_root = self.splitting_output_dataset_root
+                current_dataset_root = self.train_dataset_root.text().strip()
+                # Update if empty or still has default value
+                if not current_dataset_root or current_dataset_root == "./data":
+                    self.train_dataset_root.setText(dataset_root)
+                    self.log(f"📁 Auto-populated Training Dataset Root: {dataset_root}")
+        
+        except Exception as e:
+            # Silently fail - this is just a convenience feature
+            self.log(f"⚠️ Could not auto-populate Training fields: {e}")
+    
+    
+    def populate_splitting_from_labeling(self):
+        """Populate Splitting tab fields from Labeling tab values"""
+        try:
+            # Get images folder from Labeling tab
+            images_folder = self.label_images_input.text().strip()
+            
+            # Only populate if there's a value and the Splitting field is empty or default
+            if images_folder:
+                from pathlib import Path
+                images_path = Path(images_folder)
+                
+                # Set Source Directory to one level higher than images folder (dataset root)
+                dataset_root = images_path.parent
+                
+                current_source = self.source_dir_input.text().strip()
+                # Update if empty or still has default/placeholder value
+                if not current_source or current_source == "./data/my_dataset/images/train":
+                    self.source_dir_input.setText(str(dataset_root))
+                    self.log(f"📁 Auto-populated Source Directory (dataset root): {dataset_root}")
+            
+            # Try to find or generate YAML file
+            if images_folder:
+                images_path = Path(images_folder)
+                dataset_root = images_path.parent
+                
+                # Look for YAML file in parent directories
+                yaml_file = None
+                
+                # Check common locations
+                possible_yaml_locations = [
+                    dataset_root / "data.yaml",  # dataset root
+                    dataset_root / f"{dataset_root.name}.yaml",  # named after dataset
+                ]
+                
+                for yaml_path in possible_yaml_locations:
+                    if yaml_path.exists():
+                        yaml_file = str(yaml_path)
+                        break
+                
+                # If found, populate the YAML field
+                if yaml_file:
+                    current_yaml = self.dataset_yaml_input.text().strip()
+                    if not current_yaml:
+                        self.dataset_yaml_input.setText(yaml_file)
+                        self.log(f"📄 Auto-populated YAML Config: {yaml_file}")
+                else:
+                    # Suggest creating a YAML file
+                    suggested_yaml = dataset_root / "data.yaml"
+                    current_yaml = self.dataset_yaml_input.text().strip()
+                    if not current_yaml:
+                        self.dataset_yaml_input.setText(str(suggested_yaml))
+                        self.log(f"💡 Suggested YAML Config location: {suggested_yaml}")
+                        self.log(f"   (File will be created during splitting if it doesn't exist)")
+        
+        except Exception as e:
+            # Silently fail - this is just a convenience feature
+            self.log(f"⚠️ Could not auto-populate Splitting fields: {e}")
     
     def create_labeling_tab(self):
         """Create image labeling tab with interactive canvas"""
@@ -1064,6 +1386,22 @@ class YOLOTrainingGUI(QMainWindow):
         header_layout.addStretch()
         class_names_layout.addLayout(header_layout)
         
+        # Selected class indicator
+        self.selected_class_label = QLabel("Selected: 0: object (Press 0-9 to select class)")
+        self.selected_class_label.setStyleSheet("""
+            QLabel {
+                background: #0f3460;
+                color: #00ff88;
+                border: 2px solid #00ff88;
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 18px;
+                font-weight: bold;
+            }
+        """)
+        self.selected_class_label.setAlignment(Qt.AlignCenter)
+        class_names_layout.addWidget(self.selected_class_label)
+        
         # List widget for class names
         from PyQt5.QtWidgets import QListWidget
         self.class_names_list = QListWidget()
@@ -1085,7 +1423,74 @@ class YOLOTrainingGUI(QMainWindow):
         """)
         # Add default class
         self.class_names_list.addItem("0: object")
+        self.class_names_list.setCurrentRow(0)  # Select first class by default
+        self.class_names_list.itemClicked.connect(self.on_class_selected)
         class_names_layout.addWidget(self.class_names_list)
+        
+        # Store current class ID for drawing
+        self.current_class_id = 0
+        
+        # Class editing buttons
+        class_edit_layout = QHBoxLayout()
+        
+        self.add_class_btn = QPushButton("➕ Add Class")
+        self.add_class_btn.clicked.connect(self.add_class)
+        self.add_class_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0f3460;
+                color: #00ff88;
+                border: 2px solid #00ff88;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #00ff88;
+                color: #1a1a2e;
+            }
+        """)
+        class_edit_layout.addWidget(self.add_class_btn)
+        
+        self.edit_class_btn = QPushButton("✏️ Edit Class")
+        self.edit_class_btn.clicked.connect(self.edit_class)
+        self.edit_class_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0f3460;
+                color: #00ff88;
+                border: 2px solid #00ff88;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #00ff88;
+                color: #1a1a2e;
+            }
+        """)
+        class_edit_layout.addWidget(self.edit_class_btn)
+        
+        self.delete_class_btn = QPushButton("🗑️ Delete Class")
+        self.delete_class_btn.clicked.connect(self.delete_class)
+        self.delete_class_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0f3460;
+                color: #00ff88;
+                border: 2px solid #00ff88;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #00ff88;
+                color: #1a1a2e;
+            }
+        """)
+        class_edit_layout.addWidget(self.delete_class_btn)
+        
+        class_names_layout.addLayout(class_edit_layout)
         
         class_names_group.setLayout(class_names_layout)
         layout.addWidget(class_names_group)
@@ -1174,8 +1579,8 @@ class YOLOTrainingGUI(QMainWindow):
             "Ctrl+Z to undo | Ctrl+C to clear all | Ctrl+S to save | V to toggle class names | "
             "Mouse wheel to navigate | Esc to cancel drawing<br>"
             "<br>"
-            "💾 <b>Label Storage:</b> Labels are saved in the SAME folder as images (YOLO format). "
-            "Example: 'data/images/image001.jpg' → 'data/images/image001.txt'"
+            "💾 <b>Label Storage:</b> Labels are saved in a separate 'labels' folder (YOLO format). "
+            "Example: 'data/images/image001.jpg' → 'data/labels/image001.txt'"
         )
         instructions.setWordWrap(True)
         instructions.setStyleSheet("color: #00ff88; font-size: 21px; padding: 10px;")
@@ -1237,7 +1642,28 @@ class YOLOTrainingGUI(QMainWindow):
         
         config_layout.addWidget(QLabel("Device:"), 1, 2)
         self.device = QComboBox()
-        self.device.addItems(["cpu", "cuda"])
+        self.device.addItems(["CPU", "GPU"])
+        
+        # Auto-detect CUDA availability and pre-select if available
+        try:
+            import torch
+            if torch.cuda.is_available():
+                self.device.setCurrentText("GPU")
+                # Store message to log after UI is fully initialized
+                if not hasattr(self, '_init_messages'):
+                    self._init_messages = []
+                self._init_messages.append("🎮 CUDA detected - GPU acceleration enabled by default")
+            else:
+                self.device.setCurrentText("CPU")
+                if not hasattr(self, '_init_messages'):
+                    self._init_messages = []
+                self._init_messages.append("💻 CUDA not available - Using CPU")
+        except ImportError:
+            self.device.setCurrentText("CPU")
+            if not hasattr(self, '_init_messages'):
+                self._init_messages = []
+            self._init_messages.append("💻 PyTorch not found - Using CPU")
+        
         config_layout.addWidget(self.device, 1, 3)
         
         config_layout.addWidget(QLabel("Image Size:"), 2, 0)
@@ -1304,23 +1730,23 @@ class YOLOTrainingGUI(QMainWindow):
         dataset_group = QGroupBox("📁 Dataset Configuration")
         dataset_layout = QGridLayout()
         
-        dataset_layout.addWidget(QLabel("YAML Config File:"), 0, 0)
-        self.train_yaml_file = QLineEdit("./coco128/coco128.yaml")
-        self.train_yaml_file.setPlaceholderText("Path to dataset YAML file (e.g., coco128.yaml)")
-        dataset_layout.addWidget(self.train_yaml_file, 0, 1)
-        
-        browse_yaml_btn = QPushButton("📂 Browse")
-        browse_yaml_btn.clicked.connect(self.browse_train_yaml)
-        dataset_layout.addWidget(browse_yaml_btn, 0, 2)
-        
-        dataset_layout.addWidget(QLabel("Dataset Root:"), 1, 0)
+        dataset_layout.addWidget(QLabel("Dataset Root:"), 0, 0)
         self.train_dataset_root = QLineEdit("./data")
         self.train_dataset_root.setToolTip("Root directory of the dataset (e.g., ./data/train2017_dataset)")
-        dataset_layout.addWidget(self.train_dataset_root, 1, 1)
+        dataset_layout.addWidget(self.train_dataset_root, 0, 1)
         
         browse_dataset_btn = QPushButton("📂 Browse")
         browse_dataset_btn.clicked.connect(self.browse_train_dataset)
-        dataset_layout.addWidget(browse_dataset_btn, 1, 2)
+        dataset_layout.addWidget(browse_dataset_btn, 0, 2)
+        
+        dataset_layout.addWidget(QLabel("YAML Config File:"), 1, 0)
+        self.train_yaml_file = QLineEdit("./coco128/coco128.yaml")
+        self.train_yaml_file.setPlaceholderText("Path to dataset YAML file (e.g., coco128.yaml)")
+        dataset_layout.addWidget(self.train_yaml_file, 1, 1)
+        
+        browse_yaml_btn = QPushButton("📂 Browse")
+        browse_yaml_btn.clicked.connect(self.browse_train_yaml)
+        dataset_layout.addWidget(browse_yaml_btn, 1, 2)
         
         dataset_layout.addWidget(QLabel("Number of Classes:"), 1, 3)
         self.num_classes_display = QLabel("80")
@@ -1405,55 +1831,6 @@ class YOLOTrainingGUI(QMainWindow):
         layout.addWidget(log_group)
         
         return self._make_scrollable(widget)
-
-    
-    def create_evaluation_tab(self):
-        """Create evaluation tab"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        
-        eval_group = QGroupBox("🎯 Model Evaluation")
-        eval_layout = QGridLayout()
-        
-        eval_layout.addWidget(QLabel("Model Path:"), 0, 0)
-        self.model_path = QLineEdit("./model/yolov5s.pt")
-        eval_layout.addWidget(self.model_path, 0, 1)
-        
-        browse_model_btn = QPushButton("📂 Browse")
-        browse_model_btn.clicked.connect(self.browse_model)
-        eval_layout.addWidget(browse_model_btn, 0, 2)
-        
-        eval_layout.addWidget(QLabel("Dataset Split:"), 1, 0)
-        self.eval_split = QComboBox()
-        self.eval_split.addItems(["test", "val"])
-        eval_layout.addWidget(self.eval_split, 1, 1)
-        
-        eval_layout.addWidget(QLabel("Confidence Threshold:"), 2, 0)
-        self.conf_threshold = QDoubleSpinBox()
-        self.conf_threshold.setRange(0.0, 1.0)
-        self.conf_threshold.setValue(0.25)
-        self.conf_threshold.setSingleStep(0.05)
-        eval_layout.addWidget(self.conf_threshold, 2, 1)
-        
-        eval_btn = QPushButton("📊 Evaluate Model")
-        eval_btn.clicked.connect(self.evaluate_model)
-        eval_layout.addWidget(eval_btn, 3, 0, 1, 3)
-        
-        eval_group.setLayout(eval_layout)
-        layout.addWidget(eval_group)
-        
-        # Results display
-        results_group = QGroupBox("📈 Evaluation Results")
-        results_layout = QVBoxLayout()
-        
-        self.eval_results = QTextEdit()
-        self.eval_results.setReadOnly(True)
-        results_layout.addWidget(self.eval_results)
-        
-        results_group.setLayout(results_layout)
-        layout.addWidget(results_group)
-        
-        return self._make_scrollable(widget)
     
     def create_test_tab(self):
         """Create model testing tab for images and videos"""
@@ -1478,11 +1855,6 @@ class YOLOTrainingGUI(QMainWindow):
         self.test_confidence.setValue(0.25)
         self.test_confidence.setSingleStep(0.05)
         model_layout.addWidget(self.test_confidence, 1, 1)
-        
-        model_layout.addWidget(QLabel("Class Names:"), 2, 0)
-        self.test_class_names = QLineEdit("object")
-        self.test_class_names.setPlaceholderText("Comma-separated: object,person,dog")
-        model_layout.addWidget(self.test_class_names, 2, 1, 1, 2)
         
         model_group.setLayout(model_layout)
         layout.addWidget(model_group)
@@ -1597,14 +1969,9 @@ class YOLOTrainingGUI(QMainWindow):
         model_layout.addWidget(QLabel("Confidence:"), 2, 0)
         self.usbcam_confidence = QDoubleSpinBox()
         self.usbcam_confidence.setRange(0.0, 1.0)
-        self.usbcam_confidence.setValue(0.25)
+        self.usbcam_confidence.setValue(0.7)
         self.usbcam_confidence.setSingleStep(0.05)
         model_layout.addWidget(self.usbcam_confidence, 2, 1)
-        
-        model_layout.addWidget(QLabel("Class Names:"), 3, 0)
-        self.usbcam_class_names = QLineEdit("object")
-        self.usbcam_class_names.setPlaceholderText("Comma-separated: object,person,dog")
-        model_layout.addWidget(self.usbcam_class_names, 3, 1, 1, 2)
         
         model_group.setLayout(model_layout)
         layout.addWidget(model_group)
@@ -1787,25 +2154,26 @@ class YOLOTrainingGUI(QMainWindow):
         model_group = QGroupBox("🤖 Model Configuration")
         model_layout = QGridLayout()
         
-        model_layout.addWidget(QLabel("Model Path:"), 0, 0)
+        model_layout.addWidget(QLabel("Detection Mode:"), 0, 0)
+        self.rtsp_detection_mode = QComboBox()
+        self.rtsp_detection_mode.addItems(["Object Detection", "Segmentation", "Pose Detection"])
+        self.rtsp_detection_mode.setToolTip("Select detection mode: Object Detection, Segmentation, or Pose Detection")
+        model_layout.addWidget(self.rtsp_detection_mode, 0, 1, 1, 2)
+        
+        model_layout.addWidget(QLabel("Model Path:"), 1, 0)
         self.rtsp_model_path = QLineEdit("./model/yolov5s.pt")
-        model_layout.addWidget(self.rtsp_model_path, 0, 1)
+        model_layout.addWidget(self.rtsp_model_path, 1, 1)
         
         browse_rtsp_model_btn = QPushButton("📂 Browse")
         browse_rtsp_model_btn.clicked.connect(self.browse_rtsp_model)
-        model_layout.addWidget(browse_rtsp_model_btn, 0, 2)
+        model_layout.addWidget(browse_rtsp_model_btn, 1, 2)
         
-        model_layout.addWidget(QLabel("Confidence:"), 1, 0)
+        model_layout.addWidget(QLabel("Confidence:"), 2, 0)
         self.rtsp_confidence = QDoubleSpinBox()
         self.rtsp_confidence.setRange(0.0, 1.0)
-        self.rtsp_confidence.setValue(0.25)
+        self.rtsp_confidence.setValue(0.7)
         self.rtsp_confidence.setSingleStep(0.05)
-        model_layout.addWidget(self.rtsp_confidence, 1, 1)
-        
-        model_layout.addWidget(QLabel("Class Names:"), 2, 0)
-        self.rtsp_class_names = QLineEdit("object")
-        self.rtsp_class_names.setPlaceholderText("Comma-separated: object,person,dog")
-        model_layout.addWidget(self.rtsp_class_names, 2, 1, 1, 2)
+        model_layout.addWidget(self.rtsp_confidence, 2, 1)
         
         model_group.setLayout(model_layout)
         layout.addWidget(model_group)
@@ -1898,10 +2266,51 @@ class YOLOTrainingGUI(QMainWindow):
     
     # Event handlers
     def browse_source_dir(self):
-        """Browse for source directory"""
+        """Browse for source directory and auto-detect YAML file"""
         directory = QFileDialog.getExistingDirectory(self, "Select Source Directory")
         if directory:
             self.source_dir_input.setText(directory)
+            
+            # Auto-detect YAML file in the selected directory
+            self._auto_detect_yaml_in_directory(directory)
+    
+    def _auto_detect_yaml_in_directory(self, directory):
+        """Auto-detect and populate YAML file in the given directory"""
+        try:
+            from pathlib import Path
+            dir_path = Path(directory)
+            
+            # Search for YAML files in the directory
+            yaml_files = []
+            for ext in ['*.yaml', '*.yml']:
+                yaml_files.extend(dir_path.glob(ext))
+            
+            if yaml_files:
+                # If multiple YAML files found, prefer ones with common names
+                preferred_names = ['data.yaml', 'dataset.yaml', 'config.yaml']
+                
+                # First, try to find a preferred name
+                for preferred in preferred_names:
+                    for yaml_file in yaml_files:
+                        if yaml_file.name.lower() == preferred:
+                            self.dataset_yaml_input.setText(str(yaml_file))
+                            self.log(f"📄 Auto-detected YAML config: {yaml_file.name}")
+                            return
+                
+                # If no preferred name found, use the first YAML file
+                first_yaml = yaml_files[0]
+                self.dataset_yaml_input.setText(str(first_yaml))
+                self.log(f"📄 Auto-detected YAML config: {first_yaml.name}")
+                
+                # If multiple YAML files, log a note
+                if len(yaml_files) > 1:
+                    self.log(f"   Note: Found {len(yaml_files)} YAML files, using {first_yaml.name}")
+            else:
+                self.log(f"ℹ️ No YAML file found in {dir_path.name}")
+        
+        except Exception as e:
+            # Silently fail - this is just a convenience feature
+            self.log(f"⚠️ Could not auto-detect YAML file: {e}")
     
     def browse_dataset_yaml(self):
         """Browse for dataset YAML file"""
@@ -1971,17 +2380,53 @@ class YOLOTrainingGUI(QMainWindow):
             self.log(f"❌ Error loading YAML: {str(e)}")
             self.show_dark_message("Error", f"Failed to load YAML file:\n\n{str(e)}", "critical")
     
-    def browse_model(self):
-        """Browse for model file"""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model", "", "Model Files (*.pt)")
-        if file_path:
-            self.model_path.setText(file_path)
     
     def browse_train_dataset(self):
-        """Browse for training dataset root"""
+        """Browse for training dataset root and auto-detect YAML file"""
         directory = QFileDialog.getExistingDirectory(self, "Select Dataset Root")
         if directory:
             self.train_dataset_root.setText(directory)
+            
+            # Auto-detect YAML file in the selected directory
+            self._auto_detect_training_yaml(directory)
+    
+    def _auto_detect_training_yaml(self, directory):
+        """Auto-detect and populate YAML file in the training dataset root"""
+        try:
+            from pathlib import Path
+            dir_path = Path(directory)
+            
+            # Search for YAML files in the directory
+            yaml_files = []
+            for ext in ['*.yaml', '*.yml']:
+                yaml_files.extend(dir_path.glob(ext))
+            
+            if yaml_files:
+                # If multiple YAML files found, prefer ones with common names
+                preferred_names = ['data.yaml', 'dataset.yaml', 'config.yaml']
+                
+                # First, try to find a preferred name
+                for preferred in preferred_names:
+                    for yaml_file in yaml_files:
+                        if yaml_file.name.lower() == preferred:
+                            self.train_yaml_file.setText(str(yaml_file))
+                            self.log(f"📄 Auto-detected YAML config: {yaml_file.name}")
+                            return
+                
+                # If no preferred name found, use the first YAML file
+                first_yaml = yaml_files[0]
+                self.train_yaml_file.setText(str(first_yaml))
+                self.log(f"📄 Auto-detected YAML config: {first_yaml.name}")
+                
+                # If multiple YAML files, log a note
+                if len(yaml_files) > 1:
+                    self.log(f"   Note: Found {len(yaml_files)} YAML files, using {first_yaml.name}")
+            else:
+                self.log(f"ℹ️ No YAML file found in {dir_path.name}")
+        
+        except Exception as e:
+            # Silently fail - this is just a convenience feature
+            self.log(f"⚠️ Could not auto-detect YAML file: {e}")
     
     def browse_output_dir(self):
         """Browse for output directory"""
@@ -2095,6 +2540,18 @@ class YOLOTrainingGUI(QMainWindow):
             self.log("⏹️ User requested training stop")
             # Note: Actual stopping would require thread interruption mechanism
             self.training_log.append("⚠️ Training will stop after current epoch completes")
+            
+            # Reset UI state when user stops training
+            self.train_btn.setEnabled(True)
+            self.stop_train_btn.setEnabled(False)
+            self.training_progress.setVisible(False)
+            self.training_status_label.setText("Training stopped by user")
+        else:
+            # No training running, just reset UI state
+            self.train_btn.setEnabled(True)
+            self.stop_train_btn.setEnabled(False)
+            self.training_progress.setVisible(False)
+            self.training_status_label.setText("Ready")
     
     def save_training_log(self):
         """Save training log to file"""
@@ -2653,6 +3110,283 @@ class YOLOTrainingGUI(QMainWindow):
         state = "shown" if self.image_canvas.show_class_names else "hidden"
         self.log(f"👁️ Class names {state}")
     
+    def on_class_selected(self, item):
+        """Handle class selection from the list"""
+        try:
+            # Parse class ID from the item text (format: "ID: name")
+            class_text = item.text()
+            class_id, class_name = class_text.split(": ", 1)
+            self.current_class_id = int(class_id)
+            
+            # Update the selected class label with keyboard shortcut hint
+            if self.current_class_id <= 9:
+                self.selected_class_label.setText(f"Selected: {class_text} (Press {self.current_class_id} to select)")
+            else:
+                self.selected_class_label.setText(f"Selected: {class_text}")
+            
+            # Update canvas with new class ID
+            if hasattr(self.image_canvas, 'set_current_class'):
+                self.image_canvas.set_current_class(self.current_class_id)
+            
+            self.log(f"🎯 Selected class: {class_id} ({class_name})")
+        except (ValueError, AttributeError) as e:
+            self.log(f"⚠️ Error selecting class: {e}")
+    
+    def add_class(self):
+        """Add a new class to the available classes list"""
+        from PyQt5.QtWidgets import QInputDialog
+        
+        # Get the next class ID
+        class_count = self.class_names_list.count()
+        next_id = class_count
+        
+        # Ask user for class name
+        class_name, ok = QInputDialog.getText(
+            self,
+            "Add New Class",
+            f"Enter name for class {next_id}:",
+            text=f"class_{next_id}"
+        )
+        
+        if ok and class_name.strip():
+            class_name = class_name.strip()
+            # Add to list with format "ID: name"
+            self.class_names_list.addItem(f"{next_id}: {class_name}")
+            self.log(f"➕ Added class {next_id}: {class_name}")
+            
+            # Update canvas class names
+            self._update_canvas_class_names()
+            
+            # Update YAML file
+            self._update_yaml_file()
+    
+    def edit_class(self):
+        """Edit the selected class name"""
+        from PyQt5.QtWidgets import QInputDialog, QMessageBox
+        
+        # Get selected item
+        current_item = self.class_names_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "No Selection", "Please select a class to edit.")
+            return
+        
+        # Parse current class ID and name
+        current_text = current_item.text()
+        try:
+            class_id, class_name = current_text.split(": ", 1)
+            class_id = int(class_id)
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Format", "Could not parse class information.")
+            return
+        
+        # Ask user for new class name
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Edit Class",
+            f"Enter new name for class {class_id}:",
+            text=class_name
+        )
+        
+        if ok and new_name.strip():
+            new_name = new_name.strip()
+            # Update the item
+            current_item.setText(f"{class_id}: {new_name}")
+            self.log(f"✏️ Edited class {class_id}: {class_name} → {new_name}")
+            
+            # Update canvas class names
+            self._update_canvas_class_names()
+            
+            # Update YAML file
+            self._update_yaml_file()
+            
+            # Update canvas if needed
+            self.image_canvas.update()
+    
+    def delete_class(self):
+        """Delete the selected class"""
+        from PyQt5.QtWidgets import QMessageBox
+        
+        # Get selected item
+        current_item = self.class_names_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "No Selection", "Please select a class to delete.")
+            return
+        
+        # Parse class ID
+        current_text = current_item.text()
+        try:
+            class_id, class_name = current_text.split(": ", 1)
+            class_id = int(class_id)
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Format", "Could not parse class information.")
+            return
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self,
+            "Confirm Deletion",
+            f"Are you sure you want to delete class {class_id}: {class_name}?\n\n"
+            f"Note: This will not update existing annotations. You may need to manually "
+            f"update label files if this class is used.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Remove the item
+            row = self.class_names_list.row(current_item)
+            self.class_names_list.takeItem(row)
+            self.log(f"🗑️ Deleted class {class_id}: {class_name}")
+            
+            # Re-index remaining classes
+            self._reindex_classes()
+            
+            # Update YAML file
+            self._update_yaml_file()
+    
+    def _reindex_classes(self):
+        """Re-index classes after deletion to maintain sequential IDs"""
+        items = []
+        for i in range(self.class_names_list.count()):
+            item = self.class_names_list.item(i)
+            # Parse current name (ignore old ID)
+            try:
+                _, class_name = item.text().split(": ", 1)
+                items.append(class_name)
+            except ValueError:
+                items.append(item.text())
+        
+        # Clear and re-add with new IDs
+        self.class_names_list.clear()
+        for i, name in enumerate(items):
+            self.class_names_list.addItem(f"{i}: {name}")
+        
+        self.log(f"🔄 Re-indexed {len(items)} classes")
+        
+        # Update canvas class names
+        self._update_canvas_class_names()
+        
+        # Update selected class if needed
+        if self.current_class_id >= len(items):
+            self.current_class_id = max(0, len(items) - 1)
+            self.class_names_list.setCurrentRow(self.current_class_id)
+            self.selected_class_label.setText(f"Selected: {self.current_class_id}: {items[self.current_class_id] if items else 'none'}")
+    
+    def _update_canvas_class_names(self):
+        """Update class names in the canvas"""
+        class_names = []
+        for i in range(self.class_names_list.count()):
+            item = self.class_names_list.item(i)
+            try:
+                _, class_name = item.text().split(": ", 1)
+                class_names.append(class_name)
+            except ValueError:
+                class_names.append(item.text())
+        
+        if hasattr(self.image_canvas, 'set_class_names'):
+            self.image_canvas.set_class_names(class_names)
+    
+    def _update_yaml_file(self):
+        """Update YAML file with current class names"""
+        try:
+            import yaml
+            
+            # Get YAML file path
+            yaml_path_str = self.label_yaml_input.text().strip()
+            if not yaml_path_str:
+                self.log("⚠️ No YAML file specified, skipping update")
+                return
+            
+            yaml_path = Path(yaml_path_str)
+            
+            # Get current class names from list
+            class_names = []
+            for i in range(self.class_names_list.count()):
+                item = self.class_names_list.item(i)
+                try:
+                    _, class_name = item.text().split(": ", 1)
+                    class_names.append(class_name)
+                except ValueError:
+                    class_names.append(item.text())
+            
+            if not class_names:
+                self.log("⚠️ No classes to save to YAML")
+                return
+            
+            # Load existing YAML content if file exists
+            yaml_content = {}
+            if yaml_path.exists():
+                with open(yaml_path, 'r', encoding='utf-8') as f:
+                    yaml_content = yaml.safe_load(f) or {}
+            else:
+                # Create new YAML with default structure
+                images_dir_str = self.label_images_input.text().strip()
+                if images_dir_str:
+                    images_dir = Path(images_dir_str)
+                    # Get dataset root (parent of images folder)
+                    if images_dir.name in ['train', 'val', 'test']:
+                        dataset_root = images_dir.parent.parent
+                        train_path = "images/train"
+                        val_path = "images/val"
+                        test_path = "images/test"
+                    else:
+                        dataset_root = images_dir.parent
+                        train_path = "images"
+                        val_path = "images"
+                        test_path = "images"
+                    
+                    yaml_content = {
+                        'path': str(dataset_root.resolve()),
+                        'train': train_path,
+                        'val': val_path,
+                        'test': test_path + ' # Optional'
+                    }
+            
+            # Update class information
+            yaml_content['nc'] = len(class_names)
+            yaml_content['names'] = {idx: name for idx, name in enumerate(class_names)}
+            
+            # Save YAML file with custom formatting
+            with open(yaml_path, 'w', encoding='utf-8') as f:
+                if 'path' in yaml_content:
+                    f.write(f"path: {yaml_content['path']}\n")
+                if 'train' in yaml_content:
+                    f.write(f"train: {yaml_content['train']}\n")
+                if 'val' in yaml_content:
+                    f.write(f"val: {yaml_content['val']}\n")
+                if 'test' in yaml_content:
+                    f.write(f"test: {yaml_content['test']}\n")
+                f.write(f"nc: {yaml_content['nc']}\n")
+                f.write("names:\n")
+                for idx, name in enumerate(class_names):
+                    f.write(f"  {idx}: {name}\n")
+                f.write("\n")
+            
+            self.log(f"💾 Updated YAML file: {yaml_path.name} ({len(class_names)} classes)")
+            
+        except ImportError:
+            self.log("⚠️ PyYAML not installed, cannot update YAML file")
+        except Exception as e:
+            self.log(f"⚠️ Warning: Could not update YAML file: {str(e)}")
+    
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts for class selection"""
+        # Check if we're in the labeling tab
+        if self.tabs.currentIndex() == 1:  # Labeling tab is index 1
+            # Number keys 0-9 for quick class selection
+            key = event.key()
+            if Qt.Key_0 <= key <= Qt.Key_9:
+                class_id = key - Qt.Key_0
+                if class_id < self.class_names_list.count():
+                    self.class_names_list.setCurrentRow(class_id)
+                    item = self.class_names_list.item(class_id)
+                    if item:
+                        self.on_class_selected(item)
+                return
+        
+        # Pass event to parent
+        super().keyPressEvent(event)
+    
     def save_current_label(self):
         """Save current labels to file"""
         if not self.labeling_images:
@@ -2661,14 +3395,33 @@ class YOLOTrainingGUI(QMainWindow):
         try:
             image_path = self.labeling_images[self.current_image_index]
             
-            # Determine where to save label (check separate labels folder first)
+            # Determine where to save label
             labels_folder = self.label_labels_input.text().strip()
+            
             if labels_folder and Path(labels_folder).exists():
-                # Use separate labels folder
+                # Use separate labels folder if specified and exists
                 label_path = Path(labels_folder) / f"{image_path.stem}.txt"
             else:
-                # Save in the SAME directory as the image (YOLO standard)
-                label_path = image_path.parent / f"{image_path.stem}.txt"
+                # Auto-create labels folder at same level as images folder
+                # E.g., if images are in: data/datasets_raw/my_dataset/images
+                # Create labels at: data/datasets_raw/my_dataset/labels
+                
+                images_folder = image_path.parent
+                
+                # Check if current folder is named "images"
+                if images_folder.name.lower() == "images":
+                    # Create labels folder at same level
+                    labels_folder_path = images_folder.parent / "labels"
+                    labels_folder_path.mkdir(parents=True, exist_ok=True)
+                    label_path = labels_folder_path / f"{image_path.stem}.txt"
+                    
+                    # Update the labels input field if it's empty
+                    if not self.label_labels_input.text().strip():
+                        self.label_labels_input.setText(str(labels_folder_path))
+                        self.log(f"📁 Created labels folder: {labels_folder_path}")
+                else:
+                    # Save in the same directory as the image (YOLO standard)
+                    label_path = image_path.parent / f"{image_path.stem}.txt"
             
             # Get bboxes and polygons from canvas
             bboxes = self.image_canvas.get_bboxes()
@@ -2779,36 +3532,73 @@ class YOLOTrainingGUI(QMainWindow):
             # Generate YAML file for the dataset
             self._generate_dataset_yaml(dataset_root, source_name)
             
+            # Store output paths for Training tab auto-population
+            self.splitting_output_dataset_root = str(dataset_root.absolute())
+            self.splitting_output_yaml = str((dataset_root / f"{source_name}.yaml").absolute())
+            
+            # Update output path textbox
+            self.split_output_path.setText(str(dataset_root.absolute()))
+            
             self.show_statistics()
             
         except Exception as e:
             self.log(f"❌ Error: {str(e)}")
     
     def _generate_dataset_yaml(self, dataset_root: Path, dataset_name: str):
-        """Generate a YAML configuration file for the dataset"""
+        """Copy and update the original YAML configuration file for the dataset"""
         try:
             import yaml
+            import shutil
             
-            yaml_path = dataset_root / f"{dataset_name}.yaml"
+            output_yaml_path = dataset_root / f"{dataset_name}.yaml"
             
-            # Create YAML configuration
-            yaml_config = {
-                'path': str(dataset_root),
-                'train': 'images/train',
-                'val': 'images/val',
-                'test': 'images/test',
-                'names': {
-                    0: 'object'
-                },
-                'nc': 1
-            }
+            # Get the original YAML file path from the Splitting tab
+            original_yaml = self.dataset_yaml_input.text().strip()
             
-            # Write YAML file
-            with open(yaml_path, 'w', encoding='utf-8') as f:
-                yaml.dump(yaml_config, f, default_flow_style=False, sort_keys=False)
-            
-            self.log(f"📄 Generated YAML config: {yaml_path}")
-            self.log(f"   You can use this file in the Training tab")
+            if original_yaml and Path(original_yaml).exists():
+                # Copy the original YAML file
+                self.log(f"📄 Copying original YAML config from: {original_yaml}")
+                
+                # Read the original YAML
+                with open(original_yaml, 'r', encoding='utf-8') as f:
+                    yaml_config = yaml.safe_load(f)
+                
+                # Update the path to point to the new dataset root
+                yaml_config['path'] = str(dataset_root.absolute())
+                
+                # Ensure train/val/test paths are correct
+                yaml_config['train'] = 'images/train'
+                yaml_config['val'] = 'images/val'
+                yaml_config['test'] = 'images/test'
+                
+                # Write the updated YAML to the output location
+                with open(output_yaml_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(yaml_config, f, default_flow_style=False, sort_keys=False)
+                
+                self.log(f"✅ Copied and updated YAML config to: {output_yaml_path}")
+                self.log(f"   Updated 'path' to: {dataset_root.absolute()}")
+                self.log(f"   You can use this file in the Training tab")
+            else:
+                # No original YAML found, create a default one
+                self.log(f"⚠️ No original YAML file found, creating default YAML")
+                
+                yaml_config = {
+                    'path': str(dataset_root.absolute()),
+                    'train': 'images/train',
+                    'val': 'images/val',
+                    'test': 'images/test',
+                    'names': {
+                        0: 'object'
+                    },
+                    'nc': 1
+                }
+                
+                # Write YAML file
+                with open(output_yaml_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(yaml_config, f, default_flow_style=False, sort_keys=False)
+                
+                self.log(f"📄 Generated default YAML config: {output_yaml_path}")
+                self.log(f"   ⚠️ Warning: Using default class 'object'. Update class names if needed.")
             
         except Exception as e:
             self.log(f"⚠️ Warning: Could not generate YAML file: {str(e)}")
@@ -2869,6 +3659,21 @@ class YOLOTrainingGUI(QMainWindow):
             self.log(f"      ├─ val/    (YOLO .txt files)")
             self.log(f"      └─ test/   (YOLO .txt files)")
             self.log("")
+            
+            # Store output paths for Training tab auto-population
+            # Get the source name for YAML filename
+            source_dir = Path(self.source_dir_input.text())
+            source_name = source_dir.name
+            if source_name in ["train", "val", "test"]:
+                source_name = source_dir.parent.name
+            if source_name.endswith("_dataset"):
+                source_name = source_name[:-8]  # Remove _dataset suffix
+            
+            self.splitting_output_dataset_root = str(dataset_root_abs)
+            self.splitting_output_yaml = str(dataset_root_abs / f"{source_name}.yaml")
+            
+            # Update output path textbox
+            self.split_output_path.setText(str(dataset_root_abs))
             
             self.show_statistics()
             
@@ -3148,6 +3953,11 @@ class YOLOTrainingGUI(QMainWindow):
     def start_training(self):
         """Start model training"""
         try:
+            # Check if training is already running
+            if hasattr(self, 'training_thread') and self.training_thread and self.training_thread.isRunning():
+                self.log_training("⚠️ Training is already in progress!")
+                return
+            
             self.log_training("🚀 Initializing training...")
             self.training_status_label.setText("Initializing...")
             
@@ -3199,11 +4009,20 @@ class YOLOTrainingGUI(QMainWindow):
             if task_type == "Segmentation":
                 self.log_training(f"✅ Segmentation model confirmed: {model_arch}")
             
+            # Set task type based on UI selection
+            task_type_ui = self.task_type.currentText()
+            if task_type_ui == "Segmentation":
+                config.task_type = 'segment'
+            else:
+                config.task_type = 'detect'
+            
             config.model_architecture = model_arch
             config.epochs = self.epochs.value()
             config.batch_size = self.batch_size.value()
             config.image_size = int(self.image_size.currentText())
-            config.device = self.device.currentText()
+            # Map "GPU" to "cuda" for training engine
+            device_text = self.device.currentText()
+            config.device = "cuda" if device_text == "GPU" else device_text.lower()
             config.num_classes = 1
             config.class_names = ["object"]
             
@@ -3251,6 +4070,12 @@ class YOLOTrainingGUI(QMainWindow):
     def handle_training_error(self, error_msg):
         """Handle training error and show error message to user"""
         from PyQt5.QtWidgets import QMessageBox
+        
+        # Clean up training thread
+        if hasattr(self, 'training_thread') and self.training_thread:
+            if self.training_thread.isRunning():
+                self.training_thread.wait()  # Wait for thread to finish
+            self.training_thread = None  # Clear reference
         
         # Reset UI state
         self.train_btn.setEnabled(True)
@@ -3330,7 +4155,9 @@ class YOLOTrainingGUI(QMainWindow):
             config.epochs = self.epochs.value()
             config.batch_size = self.batch_size.value()
             config.image_size = int(self.image_size.currentText())
-            config.device = self.device.currentText()
+            # Map "GPU" to "cuda" for training engine
+            device_text = self.device.currentText()
+            config.device = "cuda" if device_text == "GPU" else device_text.lower()
             config.num_classes = 1
             config.class_names = ["object"]
             
@@ -3371,6 +4198,13 @@ class YOLOTrainingGUI(QMainWindow):
     
     def training_finished(self, metrics, is_simulation=False, result=None):
         """Handle training completion"""
+        # Clean up training thread
+        if hasattr(self, 'training_thread') and self.training_thread:
+            if self.training_thread.isRunning():
+                self.training_thread.wait()  # Wait for thread to finish
+            self.training_thread = None  # Clear reference
+        
+        # Reset UI state
         self.train_btn.setEnabled(True)
         self.stop_train_btn.setEnabled(False)
         self.training_progress.setVisible(False)
@@ -3511,49 +4345,6 @@ class YOLOTrainingGUI(QMainWindow):
             self.log_training("=" * 50)
 
     
-    def evaluate_model(self):
-        """Evaluate trained model"""
-        try:
-            model_path = Path(self.model_path.text())
-            
-            if not model_path.exists():
-                self.log("❌ Error: Model file does not exist")
-                return
-            
-            self.log("📊 Evaluating model...")
-            
-            config = EvaluationConfig(
-                confidence_threshold=self.conf_threshold.value()
-            )
-            
-            evaluator = EvaluationModule(model_path, config)
-            result = evaluator.evaluate(self.eval_split.currentText())
-            
-            # Display results
-            results_text = f"""
-╔══════════════════════════════════════╗
-║       EVALUATION RESULTS             ║
-╚══════════════════════════════════════╝
-
-📊 Overall Metrics:
-   • Precision: {result.overall_metrics.precision:.4f}
-   • Recall: {result.overall_metrics.recall:.4f}
-   • F1 Score: {result.overall_metrics.f1_score:.4f}
-   • mAP50: {result.overall_metrics.map50:.4f}
-   • mAP50-95: {result.overall_metrics.map50_95:.4f}
-
-⚡ Performance:
-   • Total Images: {result.total_images}
-   • Avg Inference Time: {result.inference_time_ms:.2f} ms
-
-🎯 Confidence Threshold: {self.conf_threshold.value()}
-"""
-            
-            self.eval_results.setText(results_text)
-            self.log("✅ Evaluation complete!")
-            
-        except Exception as e:
-            self.log(f"❌ Error: {str(e)}")
     
     # Test tab methods
     def browse_test_model(self):
@@ -3587,130 +4378,69 @@ class YOLOTrainingGUI(QMainWindow):
             self.test_input_path.setPlaceholderText("Select a video file (.mp4, .avi, .mov)")
     
     def run_detection_test(self):
-        """Run detection on selected input"""
+        """Run detection on selected input with loading dialog"""
         try:
-            import time
-            import warnings
-            from PIL import Image, ImageDraw, ImageFont
-            from PyQt5.QtGui import QPixmap
-            import cv2
-            from ultralytics import YOLO
-            
-            # Suppress YOLO warnings
-            warnings.filterwarnings('ignore')
-            import logging
-            logging.getLogger('ultralytics').setLevel(logging.ERROR)
-            
             model_path = Path(self.test_model_path.text())
             input_path = Path(self.test_input_path.text())
             
             if not model_path.exists():
                 self.log("❌ Error: Model file does not exist")
+                self.show_dark_message("Error", "Model file does not exist", "critical")
                 return
             
             if not input_path.exists():
                 self.log("❌ Error: Input file does not exist")
+                self.show_dark_message("Error", "Input file does not exist", "critical")
                 return
             
             self.log(f"🧪 Running detection on {input_path.name}...")
             self.log(f"📦 Loading model: {model_path.name}")
             
-            # Parse class names
-            class_names = [name.strip() for name in self.test_class_names.text().split(',') if name.strip()]
-            
-            # Load YOLO model
-            try:
-                model = YOLO(str(model_path))
-                self.log(f"✅ Model loaded successfully")
-            except Exception as e:
-                self.log(f"❌ Error loading model: {e}")
-                return
-            
-            # Load image
-            input_type = self.test_input_type.currentText()
-            if input_type == "Video":
-                # For video, extract first frame
-                cap = cv2.VideoCapture(str(input_path))
-                ret, frame = cap.read()
-                cap.release()
-                
-                if not ret:
-                    self.log("❌ Error: Could not read video")
-                    return
-                
-                # Convert BGR to RGB
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(frame_rgb)
-            else:
-                img = Image.open(input_path)
-            
-            # Run detection
-            start_time = time.time()
-            confidence_threshold = self.test_confidence.value()
-            
-            self.log(f"🔍 Running inference (confidence threshold: {confidence_threshold})...")
-            results = model.predict(
-                source=img,
-                conf=confidence_threshold,
-                verbose=False,
-                stream=False
+            # Create loading dialog
+            self.detection_loading_dialog = LoadingDialog(
+                self,
+                "Running Detection",
+                "Please wait while detection is running..."
             )
             
-            inference_time = (time.time() - start_time) * 1000
+            # Create detection thread
+            input_type = self.test_input_type.currentText()
+            confidence_threshold = self.test_confidence.value()
             
-            # Get detections from results
-            result = results[0]
-            boxes = result.boxes
+            self.detection_thread = DetectionThread(
+                model_path,
+                input_path,
+                confidence_threshold,
+                input_type
+            )
             
-            # Draw bounding boxes
-            draw = ImageDraw.Draw(img)
+            # Connect signals
+            self.detection_thread.progress.connect(self.on_detection_progress)
+            self.detection_thread.finished.connect(self.on_detection_finished)
+            self.detection_thread.error.connect(self.on_detection_error)
             
-            colors = [
-                (0, 255, 136),   # Neon green
-                (255, 100, 100), # Red
-                (100, 150, 255), # Blue
-                (255, 200, 0),   # Yellow
-                (255, 0, 255),   # Magenta
-            ]
+            # Start thread and show dialog
+            self.detection_thread.start()
+            self.detection_loading_dialog.exec_()
             
-            detection_count = 0
-            for box in boxes:
-                # Get box coordinates (xyxy format)
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                conf = float(box.conf[0])
-                class_id = int(box.cls[0])
-                
-                # Draw box
-                color = colors[class_id % len(colors)]
-                draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
-                
-                # Get class name
-                if class_names and class_id < len(class_names):
-                    class_name = class_names[class_id]
-                elif hasattr(model, 'names') and class_id in model.names:
-                    class_name = model.names[class_id]
-                else:
-                    class_name = f"Class {class_id}"
-                
-                label = f"{class_name} {conf:.2f}"
-                
-                # Draw label background
-                try:
-                    font = ImageFont.truetype("arial.ttf", 16)
-                except:
-                    font = ImageFont.load_default()
-                
-                bbox = draw.textbbox((x1, y1 - 20), label, font=font)
-                draw.rectangle(bbox, fill=color)
-                draw.text((x1, y1 - 20), label, fill=(26, 26, 46), font=font)
-                
-                detection_count += 1
-            
-            # Save result to temp file and display
-            temp_path = Path("./temp_detection_result.jpg")
-            img.save(temp_path)
+        except Exception as e:
+            self.log(f"❌ Error: {str(e)}")
+            self.show_dark_message("Error", f"Failed to run detection:\n\n{str(e)}", "critical")
+    
+    def on_detection_progress(self, message):
+        """Handle detection progress updates"""
+        if hasattr(self, 'detection_loading_dialog'):
+            self.detection_loading_dialog.update_status(message)
+    
+    def on_detection_finished(self, result_image, detection_count, inference_time, temp_path):
+        """Handle detection completion"""
+        try:
+            # Close loading dialog
+            if hasattr(self, 'detection_loading_dialog'):
+                self.detection_loading_dialog.accept()
             
             # Display result with 10% padding (90% of available size)
+            from PyQt5.QtGui import QPixmap
             pixmap = QPixmap(str(temp_path))
             display_size = self.test_result_display.size()
             # Reduce display size by 10% to show bounding boxes at edges
@@ -3725,8 +4455,11 @@ class YOLOTrainingGUI(QMainWindow):
             self.test_result_display.setPixmap(scaled_pixmap)
             
             # Update info
+            input_path = Path(self.test_input_path.text())
+            confidence_threshold = self.test_confidence.value()
+            
             self.test_result_info.setText(
-                f"✅ Detection complete | {input_path.name} | {img.width}x{img.height}px"
+                f"✅ Detection complete | {input_path.name} | {result_image.width}x{result_image.height}px"
             )
             self.test_detection_info.setText(
                 f"Detections: {detection_count} | Time: {inference_time:.1f}ms | Conf: {confidence_threshold}"
@@ -3739,9 +4472,16 @@ class YOLOTrainingGUI(QMainWindow):
             self.log(f"✅ Detected {detection_count} objects in {inference_time:.1f}ms")
             
         except Exception as e:
-            self.log(f"❌ Error during detection: {str(e)}")
-            import traceback
-            self.log(f"Details: {traceback.format_exc()}")
+            self.log(f"❌ Error displaying results: {str(e)}")
+    
+    def on_detection_error(self, error_message):
+        """Handle detection error"""
+        # Close loading dialog
+        if hasattr(self, 'detection_loading_dialog'):
+            self.detection_loading_dialog.reject()
+        
+        self.log(f"❌ Detection error: {error_message}")
+        self.show_dark_message("Detection Error", f"Failed to run detection:\n\n{error_message}", "critical")
     
     def save_detection_result(self):
         """Save detection result to file"""
@@ -3782,9 +4522,6 @@ class YOLOTrainingGUI(QMainWindow):
                 self.show_dark_message("Model Not Found", "The specified model file does not exist.", "warning")
                 return
             
-            # Parse class names
-            class_names = [name.strip() for name in self.rtsp_class_names.text().split(',') if name.strip()]
-            
             self.log(f"📡 Starting RTSP stream: {rtsp_url}")
             self.log(f"📦 Using model: {model_path.name}")
             
@@ -3793,12 +4530,12 @@ class YOLOTrainingGUI(QMainWindow):
             self.stop_rtsp_btn.setEnabled(True)
             self.rtsp_stream_info.setText("Connecting to stream...")
             
-            # Start RTSP thread
+            # Start RTSP thread (class names will be loaded from model)
             self.rtsp_thread = RTSPThread(
                 rtsp_url,
                 model_path,
                 self.rtsp_confidence.value(),
-                class_names
+                None  # Class names will be loaded from model
             )
             self.rtsp_thread.frame_ready.connect(self.update_rtsp_frame)
             self.rtsp_thread.status_update.connect(self.update_rtsp_status)
@@ -3941,9 +4678,6 @@ class YOLOTrainingGUI(QMainWindow):
                 self.show_dark_message("Model Not Found", "The specified model file does not exist.", "warning")
                 return
             
-            # Parse class names
-            class_names = [name.strip() for name in self.usbcam_class_names.text().split(',') if name.strip()]
-            
             self.log(f"📹 Starting USB camera {camera_index}")
             self.log(f"🎯 Detection mode: {detection_mode}")
             self.log(f"📦 Using model: {model_path.name}")
@@ -3953,12 +4687,12 @@ class YOLOTrainingGUI(QMainWindow):
             self.stop_usbcam_btn.setEnabled(True)
             self.usbcam_stream_info.setText("Opening camera...")
             
-            # Start USB camera thread
+            # Start USB camera thread (class names will be loaded from model)
             self.usbcam_thread = USBCamThread(
                 camera_index,
                 model_path,
                 self.usbcam_confidence.value(),
-                class_names,
+                None,  # Class names will be loaded from model
                 detection_mode
             )
             self.usbcam_thread.frame_ready.connect(self.update_usbcam_frame)
@@ -4982,7 +5716,7 @@ mAP50: 0.57 (57%)
 **Problem:** Can't find directory
 
 **Solutions:**
-1. Use absolute paths (C:\...)
+1. Use relative paths (./data/...) or absolute paths
 2. Check spelling
 3. Use Browse button
 4. Ensure folder exists

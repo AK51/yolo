@@ -131,6 +131,7 @@ class TrainingConfig:
     pretrained_weights: Optional[Path] = None
     num_classes: int = 1
     class_names: List[str] = field(default_factory=list)
+    task_type: str = 'detect'  # 'detect' or 'segment'
     
     # Training parameters
     epochs: int = 100

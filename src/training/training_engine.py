@@ -124,16 +124,25 @@ class TrainingEngine:
                                 best_epoch = epoch_idx + 1
             
             # Find the best model file
-            # With project=output_dir and name="train", Ultralytics creates:
-            # output_dir/train/weights/best.pt (no "detect" folder when project is absolute path)
-            # But we also need to check for runs/segment/model/train/weights/best.pt
+            # Ultralytics behavior with project parameter:
+            # - If project is relative (e.g., "test_output"), it becomes: runs/detect/{project}/train/weights/best.pt
+            # - If project is absolute, it uses that path directly
+            # We need to check both patterns
+            
+            # Get the project name from output_dir
+            project_name = self.output_dir.name if isinstance(self.output_dir, Path) else Path(self.output_dir).name
+            
             possible_paths = [
-                Path("./runs/segment/model/train/weights/best.pt"),  # Relative path for segmentation
-                Path("./runs/detect/train/weights/best.pt"),  # Relative path for detection
-                self.output_dir / "train" / "weights" / "best.pt",  # New structure (absolute path)
-                self.output_dir / "detect" / "train" / "weights" / "best.pt",  # With detect folder
-                self.output_dir / "weights" / "best.pt",  # Direct path
-                self.output_dir.parent / "detect" / self.output_dir.parent.name / self.output_dir.name / "weights" / "best.pt",  # Old structure
+                # Pattern 1: Ultralytics default with relative project (most common)
+                Path(f"./runs/detect/{project_name}/train/weights/best.pt"),
+                # Pattern 2: Direct output_dir path (if project was absolute)
+                self.output_dir / "train" / "weights" / "best.pt",
+                # Pattern 3: Alternative structures
+                self.output_dir / "weights" / "best.pt",
+                self.output_dir / "detect" / "train" / "weights" / "best.pt",
+                # Pattern 4: Default Ultralytics paths (fallback)
+                Path("./runs/detect/train/weights/best.pt"),
+                Path("./runs/segment/model/train/weights/best.pt"),  # Old segmentation (last resort)
             ]
             
             model_path = None
@@ -216,23 +225,30 @@ class TrainingEngine:
                     model_archive_dir = Path("./model")
                     model_archive_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Check if this is a segmentation model
-                    is_segmentation = False
-                    print(f"📂 Loading model checkpoint from: {model_path}")
+                    # Use task_type from config to determine if segmentation
+                    is_segmentation = (self.config.task_type == 'segment')
+                    
+                    print(f"📋 Training Configuration:")
+                    print(f"   Task Type: {self.config.task_type}")
+                    print(f"   Model Architecture: {self.config.model_architecture}")
+                    
+                    if is_segmentation:
+                        print(f"   ✅ This is a SEGMENTATION training")
+                    else:
+                        print(f"   ✅ This is a DETECTION training")
+                    print(f"📂 Loading model checkpoint for information...")
                     print(f"📊 File size: {model_path.stat().st_size / (1024*1024):.2f} MB")
                     
                     try:
                         checkpoint = torch.load(str(model_path), map_location='cpu')
                         print(f"✅ Model checkpoint loaded successfully")
                         
-                        # Get training arguments
+                        # Get training arguments for information only
                         train_args = checkpoint.get('train_args', {})
-                        actual_task = train_args.get('task', 'unknown')
-                        actual_model = train_args.get('model', 'unknown')
                         
                         print(f"\n📋 Model Training Arguments:")
-                        print(f"   Task: {actual_task}")
-                        print(f"   Model: {actual_model}")
+                        print(f"   Task: {train_args.get('task', 'unknown')}")
+                        print(f"   Model: {train_args.get('model', 'unknown')}")
                         print(f"   Epochs: {train_args.get('epochs', 'unknown')}")
                         print(f"   Batch: {train_args.get('batch', 'unknown')}")
                         print(f"   Image size: {train_args.get('imgsz', 'unknown')}")
@@ -258,33 +274,8 @@ class TrainingEngine:
                             if 'metrics/mAP50-95(M)' in metrics:
                                 print(f"   Mask mAP50-95: {metrics['metrics/mAP50-95(M)']:.4f}")
                         
-                        # Verify if it's a segmentation model
-                        print(f"\n🎯 Model Type Verification:")
-                        print(f"   Checking task type: {actual_task}")
-                        print(f"   Checking model name: {actual_model}")
-                        
-                        if actual_task == 'segment':
-                            print(f"   ✅ Task is 'segment' - This is a segmentation model!")
-                        else:
-                            print(f"   ❌ Task is '{actual_task}' - This is NOT a segmentation model!")
-                        
-                        if '-seg' in str(actual_model):
-                            print(f"   ✅ Model has '-seg' suffix - Correct architecture!")
-                        else:
-                            print(f"   ❌ Model doesn't have '-seg' suffix - Wrong architecture!")
-                        
-                        if actual_task == 'segment' and '-seg' in str(actual_model):
-                            is_segmentation = True
-                            print(f"\n✅✅✅ CONFIRMED: This IS a SEGMENTATION model! ✅✅✅")
-                        else:
-                            print(f"\n❌ This is NOT a segmentation model")
-                            if actual_task == 'detect':
-                                print(f"   This is a DETECTION model")
-                        
                     except Exception as e:
-                        print(f"❌ Error verifying model type: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        print(f"⚠️ Could not load checkpoint details: {e}")
                     
                     # Generate timestamped filename with _seg suffix if segmentation
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
